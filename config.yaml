@@ -1,0 +1,31 @@
+name: DOMUS Guardian
+version: "0.1.0"
+slug: domus_guardian
+description: Motore health, incidenti e notifiche per Home Assistant
+
+arch:
+  - amd64
+
+startup: application
+boot: auto
+init: false
+
+homeassistant_api: true
+hassio_api: false
+
+ports:
+  8000/tcp: 8000
+
+ports_description:
+  8000/tcp: API REST DOMUS Guardian
+
+webui: "http://[HOST]:[PORT:8000]/docs"
+
+environment:
+  HA_URL: "http://supervisor/core"
+  HA_WS_URL: "ws://supervisor/core/websocket"
+  HA_REQUEST_TIMEOUT_SECONDS: "10"
+  HA_VERIFY_SSL: "false"
+
+options: {}
+schema: {}
