@@ -96,6 +96,38 @@ async def test_important_notifications_can_be_disabled() -> None:
 
 
 @pytest.mark.asyncio
+async def test_open_notification_cooldown_suppresses_same_device() -> None:
+    engine, factory, adapter, incident = make_engine()
+    await engine.dispatch("opened", {"incident_id": incident.id})
+
+    with factory.begin() as session:
+        second_incident = Incident(
+            entity_id=incident.entity_id,
+            kind="availability",
+            severity="critical",
+            status="open",
+            title="Test switch non disponibile",
+            description="Second availability incident.",
+        )
+        session.add(second_incident)
+        session.flush()
+        second_id = second_incident.id
+
+    await engine.dispatch("opened", {"incident_id": second_id})
+
+    with factory() as session:
+        suppressed = session.scalar(
+            select(Notification).where(
+                Notification.incident_id == second_id,
+                Notification.channel == "ha_persistent",
+            )
+        )
+
+    assert len(adapter.calls) == 1
+    assert suppressed.status == "suppressed"
+
+
+@pytest.mark.asyncio
 async def test_failed_delivery_is_retried_without_exposing_error() -> None:
     engine, factory, adapter, incident = make_engine()
     adapter.failure = RuntimeError("network unavailable")
