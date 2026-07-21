@@ -35,6 +35,8 @@ class HomeAssistantWebSocketClient:
             ping_interval=20,
             ping_timeout=20,
             close_timeout=10,
+            # The entity registry can exceed the websockets default 1 MiB limit.
+            max_size=10 * 1024 * 1024,
         ) as websocket:
             auth_required = json.loads(await websocket.recv())
             if auth_required.get("type") != "auth_required":
