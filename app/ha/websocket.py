@@ -59,12 +59,19 @@ class HomeAssistantWebSocketClient:
                 )
             )
             registry_response = json.loads(await websocket.recv())
+            physical_entity_ids: set[str] | None = None
             if registry_response.get("type") == "result" and registry_response.get(
                 "success"
             ):
+                registry_entries = registry_response.get("result") or []
+                physical_entity_ids = {
+                    entry["entity_id"]
+                    for entry in registry_entries
+                    if entry.get("entity_id") and entry.get("device_id")
+                }
                 self._event_bus.publish(
                     "entity_registry_loaded",
-                    {"entries": registry_response.get("result") or []},
+                    {"entries": registry_entries},
                 )
             else:
                 logger.warning(
@@ -86,6 +93,11 @@ class HomeAssistantWebSocketClient:
                 for state in states_response.get("result") or []:
                     entity_id = state.get("entity_id")
                     if not entity_id:
+                        continue
+                    if (
+                        physical_entity_ids is not None
+                        and entity_id not in physical_entity_ids
+                    ):
                         continue
                     self._event_bus.publish(
                         "state_changed",
