@@ -1,7 +1,22 @@
-from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
-from app.services.device_debounce import DeviceDebouncer
+from app.models import Device
 from app.services.health_engine import HealthEngine, calculate_health_score_status
+from app.services.health_weights import HealthWeights
+
+
+class FakeDeviceService:
+    def __init__(self, devices: list[dict[str, object]]) -> None:
+        self._devices = devices
+
+    def diagnostics(self, _profile_for):
+        return self._devices
+
+
+def weights() -> HealthWeights:
+    return HealthWeights.from_file(
+        Path(__file__).parents[1] / "app" / "config" / "health_weights.json"
+    )
 
 
 def test_health_is_critical_for_unavailable_device_incident() -> None:
@@ -28,18 +43,74 @@ def test_health_returns_healthy_after_resolution() -> None:
     assert status == "healthy"
 
 
-def test_health_uses_only_stable_device_states() -> None:
-    now = datetime(2026, 7, 21, 12, tzinfo=timezone.utc)
-    debouncer = DeviceDebouncer(timedelta(seconds=30))
-    health = HealthEngine(debouncer)
+def test_optional_devices_have_minimal_health_impact() -> None:
+    devices = [
+        {
+            "last_state": "available",
+            "category": "important",
+            "weight": 1.0,
+            "include_in_score": True,
+        }
+        for _ in range(20)
+    ]
+    devices.extend(
+        {
+            "last_state": "unavailable",
+            "category": "optional",
+            "weight": 0.05,
+            "include_in_score": True,
+        }
+        for _ in range(15)
+    )
 
-    debouncer.process_state_change("physical-1", True, now)
-    debouncer.process_state_change("physical-1", False, now + timedelta(seconds=1))
+    snapshot = HealthEngine(FakeDeviceService(devices), weights()).snapshot(True)
+    assert snapshot.offline_devices == 15
+    assert snapshot.score >= 95
+    assert snapshot.status == "warning"
 
-    assert health.snapshot(database_connected=True).offline_devices == 0
 
-    debouncer.flush_due(now + timedelta(seconds=31))
-    snapshot = health.snapshot(database_connected=True)
-    assert snapshot.offline_devices == 1
-    assert snapshot.score == 70
+def test_critical_devices_have_high_health_impact() -> None:
+    devices = [
+        {
+            "last_state": "available",
+            "category": "important",
+            "weight": 1.0,
+            "include_in_score": True,
+        }
+        for _ in range(20)
+    ]
+    devices.extend(
+        {
+            "last_state": "unavailable",
+            "category": "critical",
+            "weight": 20.0,
+            "include_in_score": True,
+        }
+        for _ in range(2)
+    )
+
+    snapshot = HealthEngine(FakeDeviceService(devices), weights()).snapshot(True)
+    assert snapshot.offline_devices == 2
+    assert snapshot.score < 80
     assert snapshot.status == "critical"
+
+
+def test_profile_rules_use_domain_device_class_and_name() -> None:
+    policy = weights()
+
+    tv = Device(entity_id="media_player.tv", domain="media_player", name="TV")
+    door = Device(
+        entity_id="binary_sensor.door",
+        domain="binary_sensor",
+        name="Porta ingresso",
+        device_class="door",
+    )
+    main_light = Device(
+        entity_id="light.centrale",
+        domain="light",
+        name="Luce Centrale",
+    )
+
+    assert policy.profile_for([tv]).category == "optional"
+    assert policy.profile_for([door]).category == "critical"
+    assert policy.profile_for([main_light]).category == "critical"

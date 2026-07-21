@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.0
+
+- Aggiunti profili health pesati (`critical`, `important`, `optional`).
+- Aggiunta classificazione configurabile per dominio, device class e nome.
+- Health score calcolato sul peso dei dispositivi stabilizzati offline.
+- Aggiunto campo `device_class` al catalogo dispositivi.
+- Arricchito endpoint diagnostico dei dispositivi stabilizzati.
+
 ## 0.4.0
 
 - Raggruppamento delle entità per dispositivo fisico tramite il registro entità

@@ -18,8 +18,14 @@ class DeviceRepository:
             session.add(device)
 
         device.name = dto.friendly_name or device.name
+        device.device_class = self._device_class(dto) or device.device_class
         device.state = dto.state
         device.is_available = dto.is_available
         device.last_seen_at = dto.time_fired
         session.flush()
         return device
+
+    @staticmethod
+    def _device_class(dto: StateChangedDTO) -> str | None:
+        value = dto.attributes.get("device_class")
+        return str(value) if value is not None else None

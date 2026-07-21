@@ -29,6 +29,14 @@ Un cambio di disponibilità deve restare invariato per `45` secondi prima di
 aprire o risolvere un incidente; l’intervallo è configurabile nelle opzioni
 dell’App (`device_debounce_seconds`, da 5 a 300 secondi).
 
+## Score health pesato
+
+Le regole in `app/config/health_weights.json` classificano ogni gruppo come
+`critical`, `important` oppure `optional`. Il punteggio usa il rapporto tra il
+peso dei dispositivi offline e il peso totale dei dispositivi stabilizzati;
+TV, TTS e dispositivi di test incidono quindi molto meno di porte, allarmi e
+luci principali.
+
 ## Installazione Home Assistant
 
 Il progetto viene eseguito come App locale in:
@@ -48,6 +56,7 @@ nel repository.
 - `/api/v1/db/ping`
 - `/api/v1/ha/ping`
 - `/api/v1/ha/health`
+- `/api/v1/health/weights`
 - `/api/v1/devices`
 - `/api/v1/devices/debounced`
 - `/api/v1/incidents`

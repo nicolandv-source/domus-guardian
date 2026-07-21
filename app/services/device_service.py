@@ -5,12 +5,15 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
+from sqlalchemy import select
 
 from app.dto import StateChangedDTO
+from app.models import Device
 from app.repositories.devices import DeviceRepository
 from app.repositories.incidents import IncidentRepository
 from app.services.device_debounce import DeviceDebouncer, DeviceStateChange
 from app.services.device_grouping import DeviceGrouping
+from app.services.health_weights import DeviceProfile
 
 
 logger = logging.getLogger(__name__)
@@ -65,25 +68,51 @@ class DeviceService:
                     self._apply_change(session, change)
         return changes
 
-    def diagnostics(self) -> list[dict[str, object]]:
+    def diagnostics(
+        self,
+        profile_for: Callable[[list[Device]], DeviceProfile] | None = None,
+    ) -> list[dict[str, object]]:
         debounce = self._debouncer.diagnostics()
+        grouped_devices = self._grouping.all_snapshots()
+        entity_ids = {
+            entity_id for grouped in grouped_devices for entity_id in grouped.entity_ids
+        }
+        with self._session_factory() as session:
+            known_devices = {
+                device.entity_id: device
+                for device in session.scalars(
+                    select(Device).where(Device.entity_id.in_(entity_ids))
+                )
+            }
         result = []
-        for grouped in self._grouping.all_snapshots():
+        for grouped in grouped_devices:
             state = debounce.get(grouped.device_id)
-            result.append(
-                {
-                    "device_id": grouped.device_id,
-                    "entity_ids": grouped.entity_ids,
-                    "last_state": self._state_label(state.last_state)
-                    if state
-                    else None,
-                    "pending_state": self._state_label(state.pending_state)
-                    if state and state.pending_state is not None
-                    else None,
-                    "debounce_until": state.debounce_until if state else None,
-                    "last_change_time": state.last_change_time if state else None,
-                }
-            )
+            item: dict[str, object] = {
+                "device_id": grouped.device_id,
+                "entity_ids": grouped.entity_ids,
+                "last_state": self._state_label(state.last_state) if state else None,
+                "pending_state": self._state_label(state.pending_state)
+                if state and state.pending_state is not None
+                else None,
+                "debounce_until": state.debounce_until if state else None,
+                "last_change_time": state.last_change_time if state else None,
+            }
+            if profile_for is not None:
+                profile = profile_for(
+                    [
+                        known_devices[entity_id]
+                        for entity_id in grouped.entity_ids
+                        if entity_id in known_devices
+                    ]
+                )
+                item.update(
+                    {
+                        "category": profile.category,
+                        "weight": profile.weight,
+                        "include_in_score": profile.include_in_score,
+                    }
+                )
+            result.append(item)
         return result
 
     def _apply_change(self, session: Session, change: DeviceStateChange) -> None:

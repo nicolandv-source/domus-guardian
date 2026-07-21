@@ -26,6 +26,7 @@ class Device(Base):
     entity_id: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     name: Mapped[Optional[str]] = mapped_column(String(255))
     domain: Mapped[str] = mapped_column(String(64), nullable=False)
+    device_class: Mapped[Optional[str]] = mapped_column(String(64))
     state: Mapped[Optional[str]] = mapped_column(String(255))
     is_available: Mapped[bool] = mapped_column(
         Boolean,

@@ -5,6 +5,7 @@ import logging
 import os
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, HTTPException
@@ -21,6 +22,7 @@ from app.services.device_debounce import DeviceDebouncer
 from app.services.device_grouping import DeviceGrouping
 from app.services.device_service import DeviceService
 from app.services.health_engine import HealthEngine
+from app.services.health_weights import HealthWeights
 from app.settings import get_settings
 
 
@@ -32,6 +34,12 @@ settings = get_settings()
 def debounce_window() -> timedelta:
     seconds = int(os.getenv("DEVICE_DEBOUNCE_SECONDS", "45"))
     return timedelta(seconds=max(5, min(seconds, 300)))
+
+
+def health_weights() -> HealthWeights:
+    return HealthWeights.from_file(
+        Path(__file__).parent / "config" / "health_weights.json"
+    )
 
 
 async def run_debounce_worker(service: DeviceService) -> None:
@@ -54,7 +62,8 @@ async def lifespan(app: FastAPI):
         grouping=grouping,
         debouncer=debouncer,
     )
-    health_engine = HealthEngine(debouncer)
+    weights = health_weights()
+    health_engine = HealthEngine(service, weights)
     adapter = HomeAssistantAdapter(event_bus, service)
     adapter.subscribe()
 
@@ -73,6 +82,7 @@ async def lifespan(app: FastAPI):
     )
     app.state.device_service = service
     app.state.health_engine = health_engine
+    app.state.health_weights = weights
     app.state.websocket_task = websocket_task
     app.state.debounce_task = debounce_task
 
@@ -169,7 +179,12 @@ def list_devices() -> list[dict[str, object]]:
 
 @app.get("/api/v1/devices/debounced")
 def list_debounced_devices() -> list[dict[str, object]]:
-    return app.state.device_service.diagnostics()
+    return app.state.device_service.diagnostics(app.state.health_weights.profile_for)
+
+
+@app.get("/api/v1/health/weights")
+def list_health_weights() -> list[dict[str, object]]:
+    return list_debounced_devices()
 
 
 @app.get("/api/v1/incidents")
@@ -214,5 +229,7 @@ def health() -> dict[str, object]:
         "critical_incidents": snapshot.critical_incidents,
         "warning_incidents": snapshot.warning_incidents,
         "offline_devices": snapshot.offline_devices,
+        "total_weight": snapshot.total_weight,
+        "offline_devices_weighted": snapshot.offline_weight,
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
