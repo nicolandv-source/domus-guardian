@@ -60,6 +60,20 @@ def notification_policy() -> NotificationPolicy:
     )
 
 
+def watchdog_options() -> tuple[int, timedelta, int]:
+    """Read watchdog options without requiring a settings.py migration."""
+    interval_seconds = max(
+        10, min(int(os.getenv("WATCHDOG_INTERVAL_SECONDS", "60")), 3600)
+    )
+    stale_minutes = max(
+        1, min(int(os.getenv("WATCHDOG_WEBSOCKET_STALE_MINUTES", "10")), 1440)
+    )
+    memory_threshold_mb = max(
+        64, min(int(os.getenv("WATCHDOG_MEMORY_THRESHOLD_MB", "512")), 4096)
+    )
+    return interval_seconds, timedelta(minutes=stale_minutes), memory_threshold_mb
+
+
 async def run_debounce_worker(service: DeviceService) -> None:
     while True:
         changes = service.flush_debounce()
@@ -124,16 +138,17 @@ async def lifespan(app: FastAPI):
         run_notification_retry_worker(notification_engine),
         name="notification-retry-worker",
     )
+    watchdog_interval, websocket_stale_after, watchdog_memory_threshold = (
+        watchdog_options()
+    )
     watchdog = WatchdogService(
         database_check=ping_database,
         database_recover=reset_database_pool,
         websocket=websocket_client,
         event_bus=event_bus,
-        interval_seconds=settings.watchdog_interval_seconds,
-        websocket_stale_after=timedelta(
-            minutes=max(1, settings.watchdog_websocket_stale_minutes)
-        ),
-        memory_threshold_mb=settings.watchdog_memory_threshold_mb,
+        interval_seconds=watchdog_interval,
+        websocket_stale_after=websocket_stale_after,
+        memory_threshold_mb=watchdog_memory_threshold,
     )
     watchdog_task = asyncio.create_task(
         watchdog.run_forever(),

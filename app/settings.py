@@ -15,10 +15,6 @@ class Settings(BaseSettings):
     ha_request_timeout_seconds: float = 10
     ha_verify_ssl: bool = False
 
-    watchdog_interval_seconds: int = 60
-    watchdog_websocket_stale_minutes: int = 10
-    watchdog_memory_threshold_mb: int = 512
-
     model_config = SettingsConfigDict(
         case_sensitive=False,
         extra="ignore",
