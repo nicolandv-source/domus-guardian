@@ -1,5 +1,5 @@
 name: DOMUS Guardian
-version: "0.5.0"
+version: "0.6.0"
 slug: domus_guardian
 description: Motore health, incidenti e notifiche per Home Assistant
 
@@ -22,7 +22,7 @@ ports_description:
 webui: "http://[HOST]:[PORT:8000]/docs"
 
 environment:
-  APP_VERSION: "0.5.0"
+  APP_VERSION: "0.6.0"
   HA_URL: "http://supervisor/core"
   HA_WS_URL: "ws://supervisor/core/websocket"
   HA_REQUEST_TIMEOUT_SECONDS: "10"
@@ -35,6 +35,8 @@ options:
   database_user: "domus_guardian"
   database_password: null
   device_debounce_seconds: 45
+  notify_important_incidents: true
+  notification_cooldown_minutes: 10
 
 schema:
   database_host: str
@@ -43,3 +45,5 @@ schema:
   database_user: str
   database_password: password
   device_debounce_seconds: int
+  notify_important_incidents: bool
+  notification_cooldown_minutes: int

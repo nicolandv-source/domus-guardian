@@ -8,7 +8,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select
 
 from app.dto import StateChangedDTO
-from app.models import Device
+from app.core.event_bus import EventBus
+from app.models import Device, Incident
 from app.repositories.devices import DeviceRepository
 from app.repositories.incidents import IncidentRepository
 from app.services.device_debounce import DeviceDebouncer, DeviceStateChange
@@ -27,12 +28,16 @@ class DeviceService:
         incident_repository: IncidentRepository,
         grouping: DeviceGrouping,
         debouncer: DeviceDebouncer,
+        event_bus: EventBus | None = None,
+        profile_for: Callable[[list[Device]], DeviceProfile] | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._devices = device_repository
         self._incidents = incident_repository
         self._grouping = grouping
         self._debouncer = debouncer
+        self._event_bus = event_bus
+        self._profile_for = profile_for
 
     def register_entity_mapping(self, entity_id: str, device_id: str | None) -> None:
         self._grouping.register_entity_mapping(entity_id, device_id)
@@ -43,6 +48,7 @@ class DeviceService:
         now: datetime | None = None,
     ) -> DeviceStateChange | None:
         now = now or datetime.now(timezone.utc)
+        events: list[tuple[str, dict[str, object]]] = []
         with self._session_factory() as session:
             with session.begin():
                 self._devices.upsert(session, dto)
@@ -53,7 +59,8 @@ class DeviceService:
                     now,
                 )
                 if change is not None:
-                    self._apply_change(session, change)
+                    events.extend(self._apply_change(session, change))
+        self._publish_events(events)
         return change
 
     def flush_debounce(
@@ -62,10 +69,12 @@ class DeviceService:
     ) -> list[DeviceStateChange]:
         now = now or datetime.now(timezone.utc)
         changes = self._debouncer.flush_due(now)
+        events: list[tuple[str, dict[str, object]]] = []
         for change in changes:
             with self._session_factory() as session:
                 with session.begin():
-                    self._apply_change(session, change)
+                    events.extend(self._apply_change(session, change))
+        self._publish_events(events)
         return changes
 
     def diagnostics(
@@ -115,17 +124,19 @@ class DeviceService:
             result.append(item)
         return result
 
-    def _apply_change(self, session: Session, change: DeviceStateChange) -> None:
+    def _apply_change(
+        self, session: Session, change: DeviceStateChange
+    ) -> list[tuple[str, dict[str, object]]]:
         grouped = self._grouping.snapshot(change.device_id)
         if grouped is None:
-            return
+            return []
         device = self._devices.get_by_entity_id(
             session,
             grouped.representative_entity_id,
         )
         if device is None:
             logger.warning("Device di riferimento non trovato: %s", change.device_id)
-            return
+            return []
 
         if change.new_state:
             resolved = self._incidents.resolve_availability(
@@ -135,15 +146,45 @@ class DeviceService:
             )
             if resolved:
                 logger.warning("Incidente risolto: %s", change.device_id)
-            return
+            return [
+                ("incident_resolved", self._incident_payload(incident))
+                for incident in resolved
+            ]
 
+        severity = self._incident_severity(session, grouped.entity_ids)
         incident, created = self._incidents.open_availability(
             session,
             device,
             change.device_id,
+            severity,
         )
         if created:
             logger.warning("Incidente aperto: %s", incident.entity_id)
+            return [("incident_opened", self._incident_payload(incident))]
+        return []
+
+    def _incident_severity(self, session: Session, entity_ids: tuple[str, ...]) -> str:
+        if self._profile_for is None:
+            return "critical"
+        devices = list(
+            session.scalars(select(Device).where(Device.entity_id.in_(entity_ids)))
+        )
+        category = self._profile_for(devices).category
+        return {"critical": "critical", "important": "warning"}.get(category, "info")
+
+    def _publish_events(self, events: list[tuple[str, dict[str, object]]]) -> None:
+        if self._event_bus is None:
+            return
+        for event_type, payload in events:
+            self._event_bus.publish(event_type, payload)
+
+    @staticmethod
+    def _incident_payload(incident: Incident) -> dict[str, object]:
+        return {
+            "incident_id": incident.id,
+            "incident_key": incident.entity_id,
+            "severity": incident.severity,
+        }
 
     @staticmethod
     def _state_label(state: bool | None) -> str | None:

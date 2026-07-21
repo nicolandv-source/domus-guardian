@@ -37,6 +37,12 @@ peso dei dispositivi offline e il peso totale dei dispositivi stabilizzati;
 TV, TTS e dispositivi di test incidono quindi molto meno di porte, allarmi e
 luci principali.
 
+## Notifiche incidenti
+
+DOMUS crea notifiche persistenti in Home Assistant per i nuovi incidenti
+critici e, se abilitato, importanti. Le notifiche sono deduplicate per
+incidente, aggiornate alla risoluzione e protette da un cooldown configurabile.
+
 ## Installazione Home Assistant
 
 Il progetto viene eseguito come App locale in:
@@ -57,6 +63,8 @@ nel repository.
 - `/api/v1/ha/ping`
 - `/api/v1/ha/health`
 - `/api/v1/health/weights`
+- `/api/v1/notifications`
+- `/api/v1/notifications/{id}`
 - `/api/v1/devices`
 - `/api/v1/devices/debounced`
 - `/api/v1/incidents`

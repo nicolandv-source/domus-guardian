@@ -12,17 +12,20 @@ from fastapi import FastAPI, HTTPException
 from sqlalchemy import select
 
 from app.adapters.home_assistant import HomeAssistantAdapter
+from app.adapters.home_assistant_notify import HomeAssistantNotifyAdapter
 from app.core.event_bus import EventBus
 from app.database import SessionLocal, ping_database
 from app.ha.websocket import HomeAssistantWebSocketClient
-from app.models import Device, Incident
+from app.models import Device, Incident, Notification
 from app.repositories.devices import DeviceRepository
 from app.repositories.incidents import IncidentRepository
+from app.repositories.notifications import NotificationRepository
 from app.services.device_debounce import DeviceDebouncer
 from app.services.device_grouping import DeviceGrouping
 from app.services.device_service import DeviceService
 from app.services.health_engine import HealthEngine
 from app.services.health_weights import HealthWeights
+from app.services.notification_engine import NotificationEngine, NotificationPolicy
 from app.settings import get_settings
 
 
@@ -42,6 +45,20 @@ def health_weights() -> HealthWeights:
     )
 
 
+def notification_policy() -> NotificationPolicy:
+    return NotificationPolicy(
+        notify_important_incidents=os.getenv(
+            "NOTIFY_IMPORTANT_INCIDENTS", "true"
+        ).lower()
+        in {"1", "true", "yes"},
+        cooldown=timedelta(
+            minutes=max(
+                1, min(int(os.getenv("NOTIFICATION_COOLDOWN_MINUTES", "10")), 120)
+            )
+        ),
+    )
+
+
 async def run_debounce_worker(service: DeviceService) -> None:
     while True:
         changes = service.flush_debounce()
@@ -50,22 +67,44 @@ async def run_debounce_worker(service: DeviceService) -> None:
         await asyncio.sleep(1)
 
 
+async def run_notification_retry_worker(engine: NotificationEngine) -> None:
+    while True:
+        await asyncio.sleep(60)
+        retries = await engine.retry_failed()
+        if retries:
+            logger.info("Ritentate %s notifiche DOMUS", retries)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     event_bus = EventBus()
     grouping = DeviceGrouping()
     debouncer = DeviceDebouncer(debounce_window())
+    weights = health_weights()
     service = DeviceService(
         session_factory=SessionLocal,
         device_repository=DeviceRepository(),
         incident_repository=IncidentRepository(),
         grouping=grouping,
         debouncer=debouncer,
+        event_bus=event_bus,
+        profile_for=weights.profile_for,
     )
-    weights = health_weights()
     health_engine = HealthEngine(service, weights)
     adapter = HomeAssistantAdapter(event_bus, service)
     adapter.subscribe()
+    notification_engine = NotificationEngine(
+        event_bus=event_bus,
+        session_factory=SessionLocal,
+        repository=NotificationRepository(),
+        adapter=HomeAssistantNotifyAdapter(
+            base_url=settings.ha_url,
+            token=settings.ha_token,
+            timeout_seconds=settings.ha_request_timeout_seconds,
+        ),
+        policy=notification_policy(),
+    )
+    notification_engine.subscribe()
 
     websocket_client = HomeAssistantWebSocketClient(
         url=settings.ha_ws_url,
@@ -80,19 +119,26 @@ async def lifespan(app: FastAPI):
         run_debounce_worker(service),
         name="device-debounce-worker",
     )
+    notification_retry_task = asyncio.create_task(
+        run_notification_retry_worker(notification_engine),
+        name="notification-retry-worker",
+    )
     app.state.device_service = service
     app.state.health_engine = health_engine
     app.state.health_weights = weights
+    app.state.notification_engine = notification_engine
     app.state.websocket_task = websocket_task
     app.state.debounce_task = debounce_task
+    app.state.notification_retry_task = notification_retry_task
 
     try:
         yield
     finally:
         adapter.unsubscribe()
-        for task in (websocket_task, debounce_task):
+        notification_engine.unsubscribe()
+        for task in (websocket_task, debounce_task, notification_retry_task):
             task.cancel()
-        for task in (websocket_task, debounce_task):
+        for task in (websocket_task, debounce_task, notification_retry_task):
             with suppress(asyncio.CancelledError):
                 await task
         logger.info("Servizi DOMUS Guardian arrestati")
@@ -206,6 +252,42 @@ def list_incidents() -> list[dict[str, object]]:
             }
             for incident in incidents
         ]
+
+
+def notification_to_dict(notification: Notification) -> dict[str, object]:
+    return {
+        "id": notification.id,
+        "incident_id": notification.incident_id,
+        "channel": notification.channel,
+        "event_type": notification.event_type,
+        "notification_id": notification.notification_id,
+        "category": notification.category,
+        "title": notification.title,
+        "message": notification.message,
+        "status": notification.status,
+        "attempts": notification.attempts,
+        "sent_at": notification.sent_at,
+        "error_message": notification.error_message,
+        "created_at": notification.created_at,
+    }
+
+
+@app.get("/api/v1/notifications")
+def list_notifications() -> list[dict[str, object]]:
+    with SessionLocal() as session:
+        notifications = session.scalars(
+            select(Notification).order_by(Notification.created_at.desc())
+        ).all()
+        return [notification_to_dict(notification) for notification in notifications]
+
+
+@app.get("/api/v1/notifications/{notification_id}")
+def get_notification(notification_id: int) -> dict[str, object]:
+    with SessionLocal() as session:
+        notification = session.get(Notification, notification_id)
+        if notification is None:
+            raise HTTPException(status_code=404, detail="Notifica non trovata")
+        return notification_to_dict(notification)
 
 
 @app.get("/api/v1/ha/health")

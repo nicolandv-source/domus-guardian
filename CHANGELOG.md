@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.0
+
+- Aggiunte notifiche persistenti Home Assistant per incidenti critici e importanti.
+- Aggiunti record di consegna, deduplica, cooldown e retry limitato.
+- Aggiunte API per consultare le notifiche.
+
 ## 0.5.0
 
 - Aggiunti profili health pesati (`critical`, `important`, `optional`).

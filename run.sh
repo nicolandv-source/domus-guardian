@@ -21,6 +21,8 @@ database = options.get("database_name", "domus_guardian")
 user = options.get("database_user", "domus_guardian")
 password = options.get("database_password")
 debounce_seconds = int(options.get("device_debounce_seconds", 45))
+notify_important = bool(options.get("notify_important_incidents", True))
+notification_cooldown = int(options.get("notification_cooldown_minutes", 10))
 if not password:
     raise SystemExit("ERRORE: database_password non configurata")
 
@@ -36,6 +38,8 @@ for key, value in {
     "DB_USER": user,
     "DB_PASSWORD": password,
     "DEVICE_DEBOUNCE_SECONDS": str(max(5, min(debounce_seconds, 300))),
+    "NOTIFY_IMPORTANT_INCIDENTS": str(notify_important).lower(),
+    "NOTIFICATION_COOLDOWN_MINUTES": str(max(1, min(notification_cooldown, 120))),
 }.items():
     print(f"export {key}={shlex.quote(value)}")
 PY

@@ -81,6 +81,44 @@ class Incident(Base):
         onupdate=func.now(),
     )
     device: Mapped[Optional[Device]] = relationship(back_populates="incidents")
+    notifications: Mapped[list["Notification"]] = relationship(
+        back_populates="incident",
+        passive_deletes=True,
+    )
+
+
+class Notification(Base):
+    __tablename__ = "notifications"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    incident_id: Mapped[int] = mapped_column(
+        ForeignKey("incidents.id", ondelete="CASCADE"), nullable=False
+    )
+    channel: Mapped[str] = mapped_column(String(32), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    notification_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    category: Mapped[str] = mapped_column(String(32), nullable=False)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="pending", server_default="pending"
+    )
+    attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    error_message: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    incident: Mapped[Incident] = relationship(back_populates="notifications")
 
 
 Index("ix_devices_domain", Device.domain)
@@ -88,3 +126,5 @@ Index("ix_devices_available", Device.is_available)
 Index("ix_incidents_entity_id", Incident.entity_id)
 Index("ix_incidents_status", Incident.status)
 Index("ix_incidents_severity", Incident.severity)
+Index("ix_notifications_incident", Notification.incident_id)
+Index("ix_notifications_status", Notification.status)

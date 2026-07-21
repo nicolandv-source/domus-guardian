@@ -31,6 +31,7 @@ class IncidentRepository:
         session: Session,
         device: Device,
         incident_key: str,
+        severity: str = "critical",
     ) -> tuple[Incident, bool]:
         existing = self.get_open_availability(session, incident_key)
         if existing is not None:
@@ -40,7 +41,7 @@ class IncidentRepository:
             device_id=device.id,
             entity_id=incident_key,
             kind=AVAILABILITY_KIND,
-            severity="critical",
+            severity=severity,
             status="open",
             title=f"{device.name or incident_key} non disponibile",
             description="Home Assistant ha segnalato lo stato unavailable.",
