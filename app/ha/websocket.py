@@ -62,8 +62,9 @@ class HomeAssistantWebSocketClient:
                 ping_interval=20,
                 ping_timeout=20,
                 close_timeout=10,
-                # The entity registry can exceed the websockets default 1 MiB limit.
-                max_size=10 * 1024 * 1024,
+                # HA's entity registry can exceed the library default (1 MiB).
+                # It is received only from the trusted Supervisor proxy.
+                max_size=None,
             ) as websocket:
                 self._websocket = websocket
                 auth_required = json.loads(await websocket.recv())
