@@ -19,9 +19,24 @@ class HomeAssistantAdapter:
 
     def subscribe(self) -> None:
         self._event_bus.subscribe("state_changed", self.handle_state_changed)
+        self._event_bus.subscribe(
+            "entity_registry_loaded",
+            self.handle_entity_registry_loaded,
+        )
 
     def unsubscribe(self) -> None:
         self._event_bus.unsubscribe("state_changed", self.handle_state_changed)
+        self._event_bus.unsubscribe(
+            "entity_registry_loaded",
+            self.handle_entity_registry_loaded,
+        )
+
+    def handle_entity_registry_loaded(self, payload: dict[str, Any]) -> None:
+        for entry in payload.get("entries", []):
+            self._device_service.register_entity_mapping(
+                entry.get("entity_id", ""),
+                entry.get("device_id"),
+            )
 
     def handle_state_changed(self, event: dict[str, Any]) -> None:
         dto = self.to_dto(event)
@@ -52,6 +67,9 @@ class HomeAssistantAdapter:
             old_state=(old_state or {}).get("state")
             if isinstance(old_state, dict)
             else None,
+            device_id=data.get("device_id")
+            or attributes.get("device_id")
+            or attributes.get("ha_device_id"),
             domain=entity_id.partition(".")[0],
             friendly_name=attributes.get("friendly_name"),
             attributes=dict(attributes),

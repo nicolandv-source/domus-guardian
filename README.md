@@ -21,6 +21,14 @@ Quando un’entità entra nello stato `unavailable`, DOMUS apre un singolo
 incidente critico di disponibilità. Quando torna in qualsiasi stato disponibile,
 l’incidente viene marcato `resolved`.
 
+## Stabilizzazione dispositivi instabili
+
+DOMUS raggruppa le entità che Home Assistant associa allo stesso `device_id`.
+Il dispositivo fisico è disponibile se almeno una delle sue entità è disponibile.
+Un cambio di disponibilità deve restare invariato per `45` secondi prima di
+aprire o risolvere un incidente; l’intervallo è configurabile nelle opzioni
+dell’App (`device_debounce_seconds`, da 5 a 300 secondi).
+
 ## Installazione Home Assistant
 
 Il progetto viene eseguito come App locale in:
@@ -41,6 +49,7 @@ nel repository.
 - `/api/v1/ha/ping`
 - `/api/v1/ha/health`
 - `/api/v1/devices`
+- `/api/v1/devices/debounced`
 - `/api/v1/incidents`
 
 ## Test locali

@@ -52,6 +52,58 @@ class HomeAssistantWebSocketClient:
                 json.dumps(
                     {
                         "id": 1,
+                        "type": "config/entity_registry/list",
+                    }
+                )
+            )
+            registry_response = json.loads(await websocket.recv())
+            if registry_response.get("type") == "result" and registry_response.get(
+                "success"
+            ):
+                self._event_bus.publish(
+                    "entity_registry_loaded",
+                    {"entries": registry_response.get("result") or []},
+                )
+            else:
+                logger.warning(
+                    "Registro entità HA non disponibile; uso fallback entity_id"
+                )
+
+            await websocket.send(
+                json.dumps(
+                    {
+                        "id": 2,
+                        "type": "get_states",
+                    }
+                )
+            )
+            states_response = json.loads(await websocket.recv())
+            if states_response.get("type") == "result" and states_response.get(
+                "success"
+            ):
+                for state in states_response.get("result") or []:
+                    entity_id = state.get("entity_id")
+                    if not entity_id:
+                        continue
+                    self._event_bus.publish(
+                        "state_changed",
+                        {
+                            "time_fired": state.get("last_updated"),
+                            "data": {
+                                "entity_id": entity_id,
+                                "old_state": None,
+                                "new_state": state,
+                            },
+                        },
+                    )
+                logger.info("Stati iniziali Home Assistant caricati")
+            else:
+                logger.warning("Stati iniziali HA non disponibili; attendo eventi live")
+
+            await websocket.send(
+                json.dumps(
+                    {
+                        "id": 3,
                         "type": "subscribe_events",
                         "event_type": "state_changed",
                     }

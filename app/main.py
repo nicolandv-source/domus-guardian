@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager, suppress
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 from fastapi import FastAPI, HTTPException
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 from app.adapters.home_assistant import HomeAssistantAdapter
 from app.core.event_bus import EventBus
@@ -16,7 +17,10 @@ from app.ha.websocket import HomeAssistantWebSocketClient
 from app.models import Device, Incident
 from app.repositories.devices import DeviceRepository
 from app.repositories.incidents import IncidentRepository
+from app.services.device_debounce import DeviceDebouncer
+from app.services.device_grouping import DeviceGrouping
 from app.services.device_service import DeviceService
+from app.services.health_engine import HealthEngine
 from app.settings import get_settings
 
 
@@ -25,14 +29,32 @@ logging.getLogger("app.ha.websocket").setLevel(logging.INFO)
 settings = get_settings()
 
 
+def debounce_window() -> timedelta:
+    seconds = int(os.getenv("DEVICE_DEBOUNCE_SECONDS", "45"))
+    return timedelta(seconds=max(5, min(seconds, 300)))
+
+
+async def run_debounce_worker(service: DeviceService) -> None:
+    while True:
+        changes = service.flush_debounce()
+        if changes:
+            logger.info("Applicati %s cambi stabilizzati", len(changes))
+        await asyncio.sleep(1)
+
+
 @asynccontextmanager
-async def lifespan(_: FastAPI):
+async def lifespan(app: FastAPI):
     event_bus = EventBus()
+    grouping = DeviceGrouping()
+    debouncer = DeviceDebouncer(debounce_window())
     service = DeviceService(
         session_factory=SessionLocal,
         device_repository=DeviceRepository(),
         incident_repository=IncidentRepository(),
+        grouping=grouping,
+        debouncer=debouncer,
     )
+    health_engine = HealthEngine(debouncer)
     adapter = HomeAssistantAdapter(event_bus, service)
     adapter.subscribe()
 
@@ -45,55 +67,39 @@ async def lifespan(_: FastAPI):
         websocket_client.run_forever(),
         name="home-assistant-websocket",
     )
-    app.state.websocket_client = websocket_client
+    debounce_task = asyncio.create_task(
+        run_debounce_worker(service),
+        name="device-debounce-worker",
+    )
+    app.state.device_service = service
+    app.state.health_engine = health_engine
     app.state.websocket_task = websocket_task
+    app.state.debounce_task = debounce_task
 
     try:
         yield
     finally:
         adapter.unsubscribe()
-        websocket_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await websocket_task
+        for task in (websocket_task, debounce_task):
+            task.cancel()
+        for task in (websocket_task, debounce_task):
+            with suppress(asyncio.CancelledError):
+                await task
         logger.info("Servizi DOMUS Guardian arrestati")
 
 
 app = FastAPI(
     title=settings.app_name,
-    version=settings.app_version,
+    version=os.getenv("APP_VERSION", settings.app_version),
     lifespan=lifespan,
 )
-
-
-def calculate_health_score_status(
-    *,
-    database_connected: bool,
-    critical_incidents: int,
-    warning_incidents: int,
-    offline_devices: int,
-) -> tuple[int, str]:
-    score = 100
-    if not database_connected:
-        score -= 40
-    score -= critical_incidents * 25
-    score -= warning_incidents * 10
-    score -= offline_devices * 5
-    score = max(0, score)
-
-    if not database_connected or critical_incidents:
-        status = "critical"
-    elif warning_incidents or offline_devices:
-        status = "warning"
-    else:
-        status = "healthy"
-    return score, status
 
 
 @app.get("/")
 def root() -> dict[str, str]:
     return {
         "name": settings.app_name,
-        "version": settings.app_version,
+        "version": os.getenv("APP_VERSION", settings.app_version),
         "status": "running",
     }
 
@@ -119,7 +125,6 @@ async def home_assistant_ping() -> dict[str, object]:
         "Authorization": f"Bearer {settings.ha_token}",
         "Content-Type": "application/json",
     }
-
     try:
         async with httpx.AsyncClient(
             timeout=settings.ha_request_timeout_seconds,
@@ -162,6 +167,11 @@ def list_devices() -> list[dict[str, object]]:
         ]
 
 
+@app.get("/api/v1/devices/debounced")
+def list_debounced_devices() -> list[dict[str, object]]:
+    return app.state.device_service.diagnostics()
+
+
 @app.get("/api/v1/incidents")
 def list_incidents() -> list[dict[str, object]]:
     with SessionLocal() as session:
@@ -187,72 +197,22 @@ def list_incidents() -> list[dict[str, object]]:
 def health() -> dict[str, object]:
     database_connected = False
     database_error: str | None = None
-    active_incidents = 0
-    critical_incidents = 0
-    warning_incidents = 0
-    offline_devices = 0
-
     try:
         ping_database()
         database_connected = True
-        with SessionLocal() as session:
-            active_incidents = (
-                session.scalar(
-                    select(func.count())
-                    .select_from(Incident)
-                    .where(Incident.status == "open")
-                )
-                or 0
-            )
-            critical_incidents = (
-                session.scalar(
-                    select(func.count())
-                    .select_from(Incident)
-                    .where(
-                        Incident.status == "open",
-                        Incident.severity == "critical",
-                    )
-                )
-                or 0
-            )
-            warning_incidents = (
-                session.scalar(
-                    select(func.count())
-                    .select_from(Incident)
-                    .where(
-                        Incident.status == "open",
-                        Incident.severity == "warning",
-                    )
-                )
-                or 0
-            )
-            offline_devices = (
-                session.scalar(
-                    select(func.count())
-                    .select_from(Device)
-                    .where(Device.is_available.is_(False))
-                )
-                or 0
-            )
     except Exception as exc:
         logger.exception("Calcolo health DOMUS fallito")
         database_error = type(exc).__name__
 
-    score, status = calculate_health_score_status(
-        database_connected=database_connected,
-        critical_incidents=critical_incidents,
-        warning_incidents=warning_incidents,
-        offline_devices=offline_devices,
-    )
-
+    snapshot = app.state.health_engine.snapshot(database_connected)
     return {
-        "score": score,
-        "status": status,
+        "score": snapshot.score,
+        "status": snapshot.status,
         "database_connected": database_connected,
         "database_error": database_error,
-        "active_incidents": active_incidents,
-        "critical_incidents": critical_incidents,
-        "warning_incidents": warning_incidents,
-        "offline_devices": offline_devices,
+        "active_incidents": snapshot.active_incidents,
+        "critical_incidents": snapshot.critical_incidents,
+        "warning_incidents": snapshot.warning_incidents,
+        "offline_devices": snapshot.offline_devices,
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }

@@ -11,7 +11,34 @@ class FakeWebSocket:
         self.messages = [
             json.dumps({"type": "auth_required"}),
             json.dumps({"type": "auth_ok"}),
-            json.dumps({"id": 1, "type": "result", "success": True}),
+            json.dumps(
+                {
+                    "id": 1,
+                    "type": "result",
+                    "success": True,
+                    "result": [
+                        {
+                            "entity_id": "sensor.domus_test",
+                            "device_id": "physical-test",
+                        }
+                    ],
+                }
+            ),
+            json.dumps(
+                {
+                    "id": 2,
+                    "type": "result",
+                    "success": True,
+                    "result": [
+                        {
+                            "entity_id": "sensor.domus_test",
+                            "state": "on",
+                            "attributes": {},
+                        }
+                    ],
+                }
+            ),
+            json.dumps({"id": 3, "type": "result", "success": True}),
         ]
         self.events = [
             json.dumps(
@@ -72,6 +99,8 @@ async def test_authenticates_subscribes_and_publishes_event() -> None:
 
     assert websocket.sent == [
         {"type": "auth", "access_token": "secret"},
-        {"id": 1, "type": "subscribe_events", "event_type": "state_changed"},
+        {"id": 1, "type": "config/entity_registry/list"},
+        {"id": 2, "type": "get_states"},
+        {"id": 3, "type": "subscribe_events", "event_type": "state_changed"},
     ]
     assert received[0]["data"]["entity_id"] == "sensor.domus_test"

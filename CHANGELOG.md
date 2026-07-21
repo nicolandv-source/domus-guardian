@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.0
+
+- Raggruppamento delle entità per dispositivo fisico tramite il registro entità
+  Home Assistant, con fallback a `entity_id`.
+- Debounce configurabile per i cambi di disponibilità (`45` secondi predefiniti).
+- Incidenti e health calcolati solo sugli stati stabilizzati.
+- Aggiunto bootstrap degli stati correnti Home Assistant al collegamento WebSocket.
+- Aggiunto endpoint diagnostico `/api/v1/devices/debounced`.
+
 ## 0.3.0
 
 - Aggiunto client WebSocket Home Assistant con handshake e riconnessione.

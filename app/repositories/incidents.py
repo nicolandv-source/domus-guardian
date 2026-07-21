@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import datetime
 
 from sqlalchemy import select
@@ -15,11 +16,11 @@ class IncidentRepository:
     def get_open_availability(
         self,
         session: Session,
-        entity_id: str,
+        incident_key: str,
     ) -> Incident | None:
         return session.scalar(
             select(Incident).where(
-                Incident.entity_id == entity_id,
+                Incident.entity_id == incident_key,
                 Incident.kind == AVAILABILITY_KIND,
                 Incident.status == "open",
             )
@@ -29,18 +30,19 @@ class IncidentRepository:
         self,
         session: Session,
         device: Device,
+        incident_key: str,
     ) -> tuple[Incident, bool]:
-        existing = self.get_open_availability(session, device.entity_id)
+        existing = self.get_open_availability(session, incident_key)
         if existing is not None:
             return existing, False
 
         incident = Incident(
             device_id=device.id,
-            entity_id=device.entity_id,
+            entity_id=incident_key,
             kind=AVAILABILITY_KIND,
             severity="critical",
             status="open",
-            title=f"{device.name or device.entity_id} non disponibile",
+            title=f"{device.name or incident_key} non disponibile",
             description="Home Assistant ha segnalato lo stato unavailable.",
         )
         session.add(incident)
@@ -50,13 +52,18 @@ class IncidentRepository:
     def resolve_availability(
         self,
         session: Session,
-        entity_id: str,
+        incident_keys: Iterable[str],
         resolved_at: datetime,
-    ) -> Incident | None:
-        incident = self.get_open_availability(session, entity_id)
-        if incident is None:
-            return None
-        incident.status = "resolved"
-        incident.resolved_at = resolved_at
+    ) -> list[Incident]:
+        incidents = session.scalars(
+            select(Incident).where(
+                Incident.entity_id.in_(set(incident_keys)),
+                Incident.kind == AVAILABILITY_KIND,
+                Incident.status == "open",
+            )
+        ).all()
+        for incident in incidents:
+            incident.status = "resolved"
+            incident.resolved_at = resolved_at
         session.flush()
-        return incident
+        return incidents

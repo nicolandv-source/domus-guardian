@@ -20,6 +20,7 @@ port = int(options.get("database_port", 5432))
 database = options.get("database_name", "domus_guardian")
 user = options.get("database_user", "domus_guardian")
 password = options.get("database_password")
+debounce_seconds = int(options.get("device_debounce_seconds", 45))
 if not password:
     raise SystemExit("ERRORE: database_password non configurata")
 
@@ -34,6 +35,7 @@ for key, value in {
     "DB_NAME": database,
     "DB_USER": user,
     "DB_PASSWORD": password,
+    "DEVICE_DEBOUNCE_SECONDS": str(max(5, min(debounce_seconds, 300))),
 }.items():
     print(f"export {key}={shlex.quote(value)}")
 PY

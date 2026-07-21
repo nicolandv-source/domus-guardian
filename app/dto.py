@@ -13,8 +13,9 @@ class StateChangedDTO:
     friendly_name: str | None
     time_fired: datetime
     old_state: str | None = None
+    device_id: str | None = None
     attributes: dict[str, Any] = field(default_factory=dict)
 
     @property
     def is_available(self) -> bool:
-        return self.state != "unavailable"
+        return self.state not in {"unavailable", "unknown"}

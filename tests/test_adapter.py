@@ -10,7 +10,10 @@ def test_maps_home_assistant_state_changed_event() -> None:
                 "old_state": {"state": "off"},
                 "new_state": {
                     "state": "on",
-                    "attributes": {"friendly_name": "Porta test"},
+                    "attributes": {
+                        "friendly_name": "Porta test",
+                        "device_id": "physical-test",
+                    },
                 },
             },
         }
@@ -22,3 +25,4 @@ def test_maps_home_assistant_state_changed_event() -> None:
     assert dto.old_state == "off"
     assert dto.state == "on"
     assert dto.friendly_name == "Porta test"
+    assert dto.device_id == "physical-test"
