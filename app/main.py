@@ -33,6 +33,7 @@ from app.settings import get_settings
 logger = logging.getLogger(__name__)
 logging.getLogger("app.ha.websocket").setLevel(logging.INFO)
 settings = get_settings()
+APP_RELEASE_VERSION = "0.7.0"
 
 
 def debounce_window() -> timedelta:
@@ -189,7 +190,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title=settings.app_name,
-    version=os.getenv("APP_VERSION", settings.app_version),
+    version=APP_RELEASE_VERSION,
     lifespan=lifespan,
 )
 
@@ -198,7 +199,7 @@ app = FastAPI(
 def root() -> dict[str, str]:
     return {
         "name": settings.app_name,
-        "version": os.getenv("APP_VERSION", settings.app_version),
+        "version": APP_RELEASE_VERSION,
         "status": "running",
     }
 
