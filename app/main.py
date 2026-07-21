@@ -14,7 +14,7 @@ from sqlalchemy import select
 from app.adapters.home_assistant import HomeAssistantAdapter
 from app.adapters.home_assistant_notify import HomeAssistantNotifyAdapter
 from app.core.event_bus import EventBus
-from app.database import SessionLocal, ping_database
+from app.database import SessionLocal, ping_database, reset_database_pool
 from app.ha.websocket import HomeAssistantWebSocketClient
 from app.models import Device, Incident, Notification
 from app.repositories.devices import DeviceRepository
@@ -26,6 +26,7 @@ from app.services.device_service import DeviceService
 from app.services.health_engine import HealthEngine
 from app.services.health_weights import HealthWeights
 from app.services.notification_engine import NotificationEngine, NotificationPolicy
+from app.services.watchdog import WatchdogService
 from app.settings import get_settings
 
 
@@ -123,6 +124,21 @@ async def lifespan(app: FastAPI):
         run_notification_retry_worker(notification_engine),
         name="notification-retry-worker",
     )
+    watchdog = WatchdogService(
+        database_check=ping_database,
+        database_recover=reset_database_pool,
+        websocket=websocket_client,
+        event_bus=event_bus,
+        interval_seconds=settings.watchdog_interval_seconds,
+        websocket_stale_after=timedelta(
+            minutes=max(1, settings.watchdog_websocket_stale_minutes)
+        ),
+        memory_threshold_mb=settings.watchdog_memory_threshold_mb,
+    )
+    watchdog_task = asyncio.create_task(
+        watchdog.run_forever(),
+        name="domus-watchdog",
+    )
     app.state.device_service = service
     app.state.health_engine = health_engine
     app.state.health_weights = weights
@@ -130,15 +146,27 @@ async def lifespan(app: FastAPI):
     app.state.websocket_task = websocket_task
     app.state.debounce_task = debounce_task
     app.state.notification_retry_task = notification_retry_task
+    app.state.watchdog = watchdog
+    app.state.watchdog_task = watchdog_task
 
     try:
         yield
     finally:
         adapter.unsubscribe()
         notification_engine.unsubscribe()
-        for task in (websocket_task, debounce_task, notification_retry_task):
+        for task in (
+            websocket_task,
+            debounce_task,
+            notification_retry_task,
+            watchdog_task,
+        ):
             task.cancel()
-        for task in (websocket_task, debounce_task, notification_retry_task):
+        for task in (
+            websocket_task,
+            debounce_task,
+            notification_retry_task,
+            watchdog_task,
+        ):
             with suppress(asyncio.CancelledError):
                 await task
         logger.info("Servizi DOMUS Guardian arrestati")
@@ -313,5 +341,26 @@ def health() -> dict[str, object]:
         "offline_devices": snapshot.offline_devices,
         "total_weight": snapshot.total_weight,
         "offline_devices_weighted": snapshot.offline_weight,
+        "watchdog_status": app.state.watchdog.snapshot().status,
         "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@app.get("/api/v1/watchdog/health")
+def watchdog_health() -> dict[str, object]:
+    snapshot = app.state.watchdog.snapshot()
+    return {
+        "status": snapshot.status,
+        "last_check": snapshot.last_check,
+        "issues": list(snapshot.issues),
+        "actions_taken": snapshot.actions_taken,
+        "actions": list(snapshot.actions),
+        "database_latency_ms": snapshot.database_latency_ms,
+        "websocket_connected": snapshot.websocket_connected,
+        "last_websocket_event_at": snapshot.last_websocket_event_at,
+        "memory_mb": snapshot.memory_mb,
+        "active_tasks": snapshot.active_tasks,
+        "event_bus_pending_handlers": snapshot.event_bus_pending_handlers,
+        "event_bus_handler_failures": snapshot.event_bus_handler_failures,
+        "event_loop_delay_ms": snapshot.event_loop_delay_ms,
     }

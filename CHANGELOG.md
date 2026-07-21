@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.0
+
+- Aggiunto watchdog interno per DB, WebSocket, EventBus, loop async e memoria.
+- Aggiunto endpoint `/api/v1/watchdog/health` e `watchdog_status` nell'health.
+- Aggiunto reset prudente del pool database e riconnessione WebSocket su stale.
+
 ## 0.6.0
 
 - Aggiunte notifiche persistenti Home Assistant per incidenti critici e importanti.

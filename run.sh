@@ -23,6 +23,9 @@ password = options.get("database_password")
 debounce_seconds = int(options.get("device_debounce_seconds", 45))
 notify_important = bool(options.get("notify_important_incidents", True))
 notification_cooldown = int(options.get("notification_cooldown_minutes", 10))
+watchdog_interval = int(options.get("watchdog_interval_seconds", 60))
+watchdog_stale_minutes = int(options.get("watchdog_websocket_stale_minutes", 10))
+watchdog_memory_threshold = int(options.get("watchdog_memory_threshold_mb", 512))
 if not password:
     raise SystemExit("ERRORE: database_password non configurata")
 
@@ -40,6 +43,9 @@ for key, value in {
     "DEVICE_DEBOUNCE_SECONDS": str(max(5, min(debounce_seconds, 300))),
     "NOTIFY_IMPORTANT_INCIDENTS": str(notify_important).lower(),
     "NOTIFICATION_COOLDOWN_MINUTES": str(max(1, min(notification_cooldown, 120))),
+    "WATCHDOG_INTERVAL_SECONDS": str(max(10, min(watchdog_interval, 3600))),
+    "WATCHDOG_WEBSOCKET_STALE_MINUTES": str(max(1, min(watchdog_stale_minutes, 1440))),
+    "WATCHDOG_MEMORY_THRESHOLD_MB": str(max(64, min(watchdog_memory_threshold, 4096))),
 }.items():
     print(f"export {key}={shlex.quote(value)}")
 PY

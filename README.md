@@ -43,6 +43,14 @@ DOMUS crea notifiche persistenti in Home Assistant per i nuovi incidenti
 critici e, se abilitato, importanti. Le notifiche sono deduplicate per
 incidente, aggiornate alla risoluzione e protette da un cooldown configurabile.
 
+## Watchdog interno
+
+Un task interno controlla periodicamente PostgreSQL, la connessione WebSocket,
+l'EventBus, il ritardo del loop async e la memoria del processo. In caso di DB
+non disponibile resetta solo il pool SQLAlchemy; se il WebSocket rimane senza
+eventi oltre la soglia richiede una riconnessione sicura. Lo stato è disponibile
+in `/api/v1/watchdog/health` e come `watchdog_status` nell'health esistente.
+
 ## Installazione Home Assistant
 
 Il progetto viene eseguito come App locale in:
@@ -68,6 +76,7 @@ nel repository.
 - `/api/v1/devices`
 - `/api/v1/devices/debounced`
 - `/api/v1/incidents`
+- `/api/v1/watchdog/health`
 
 ## Test locali
 

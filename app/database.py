@@ -38,3 +38,8 @@ def ping_database() -> dict[str, object]:
         "user": result[1],
         "server_version": result[2],
     }
+
+
+def reset_database_pool() -> None:
+    """Drop idle connections so SQLAlchemy creates a fresh connection next time."""
+    engine.dispose()
