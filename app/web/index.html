@@ -6,6 +6,7 @@
   <meta name="theme-color" content="#151512">
   <title>DOMUS Guardian</title>
   <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/interactive.css">
 </head>
 <body>
   <div class="shell">
@@ -29,7 +30,7 @@
     <main>
       <header>
         <div><p class="eyebrow">CASA PRINCIPALE</p><h1 id="page-title">Buonasera, Nicolas</h1></div>
-        <div class="header-actions"><span id="clock"></span><button class="icon-button" aria-label="Notifiche">●</button><div class="weather"><b>21°</b><small>Sereno</small></div></div>
+        <div class="header-actions"><span id="clock"></span><button class="icon-button" id="theme-toggle" aria-label="Cambia tema">◐</button><button class="icon-button" aria-label="Notifiche">●</button><div class="weather"><b>21°</b><small>Sereno</small></div></div>
       </header>
 
       <section class="view active" id="home-view">
@@ -70,6 +71,19 @@
         <article class="panel"><div class="panel-head"><div><p class="eyebrow">CONSUMI</p><h3>Principali categorie</h3></div></div><div class="category-list"><div><span>Climatizzazione</span><b>38%</b></div><div><span>Elettrodomestici</span><b>27%</b></div><div><span>Illuminazione</span><b>18%</b></div><div><span>Altri dispositivi</span><b>17%</b></div></div></article>
       </section>
     </main>
+  </div>
+  <div class="room-modal" id="room-modal" aria-hidden="true">
+    <button class="modal-backdrop" data-close-room aria-label="Chiudi"></button>
+    <section class="room-sheet" role="dialog" aria-modal="true" aria-labelledby="room-title">
+      <div class="sheet-head"><div><p class="eyebrow">CONTROLLO AMBIENTE</p><h2 id="room-title">Living</h2></div><button class="close-button" data-close-room aria-label="Chiudi">×</button></div>
+      <div class="room-climate"><button class="temp-button" id="temp-down">−</button><div><strong id="room-temperature">21.5°</strong><small>Temperatura desiderata</small></div><button class="temp-button" id="temp-up">+</button></div>
+      <div class="control-list">
+        <button class="control-row active"><span><b>Illuminazione</b><small>Luce principale e atmosfera</small></span><i></i></button>
+        <button class="control-row"><span><b>Climatizzazione</b><small>Modalità automatica</small></span><i></i></button>
+        <button class="control-row active"><span><b>Sicurezza</b><small>Sensori attivi</small></span><i></i></button>
+      </div>
+      <p class="demo-note">Anteprima locale: i comandi saranno inviati a Home Assistant quando l’impianto sarà collegato.</p>
+    </section>
   </div>
   <nav class="mobile-nav" aria-label="Navigazione mobile"><button class="nav-item active" data-view="home">⌂<small>Home</small></button><button class="nav-item" data-view="ambienti">◇<small>Ambienti</small></button><button class="nav-item" data-view="sicurezza">◈<small>Sicurezza</small></button><button class="nav-item" data-view="energia">ϟ<small>Energia</small></button></nav>
   <script src="/static/app.js" defer></script>
