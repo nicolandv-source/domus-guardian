@@ -65,7 +65,8 @@ nel repository.
 
 ## Endpoint
 
-- `/`
+- `/` (dashboard web DOMUS)
+- `/api/v1/status`
 - `/docs`
 - `/api/v1/db/ping`
 - `/api/v1/ha/ping`

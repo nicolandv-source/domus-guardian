@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#151512">
+  <title>DOMUS Guardian</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <a class="brand" href="#home" aria-label="Domus Guardian">
+        <span class="brand-mark">D</span><span><strong>DOMUS</strong><small>GUARDIAN</small></span>
+      </a>
+      <nav aria-label="Navigazione principale">
+        <button class="nav-item active" data-view="home"><span>⌂</span> Home</button>
+        <button class="nav-item" data-view="ambienti"><span>◇</span> Ambienti</button>
+        <button class="nav-item" data-view="sicurezza"><span>◈</span> Sicurezza</button>
+        <button class="nav-item" data-view="energia"><span>ϟ</span> Energia</button>
+      </nav>
+      <div class="system-card">
+        <span class="status-dot"></span>
+        <div><strong>Sistema operativo</strong><small id="system-version">Connessione…</small></div>
+      </div>
+      <div class="profile"><span>NV</span><div><strong>Casa principale</strong><small>Amministratore</small></div></div>
+    </aside>
+
+    <main>
+      <header>
+        <div><p class="eyebrow">CASA PRINCIPALE</p><h1 id="page-title">Buonasera, Nicolas</h1></div>
+        <div class="header-actions"><span id="clock"></span><button class="icon-button" aria-label="Notifiche">●</button><div class="weather"><b>21°</b><small>Sereno</small></div></div>
+      </header>
+
+      <section class="view active" id="home-view">
+        <div class="hero-grid">
+          <article class="hero-card">
+            <div class="hero-copy"><span class="pill good">TUTTO SOTTO CONTROLLO</span><h2>La tua casa sta bene.</h2><p>I sistemi principali sono connessi e funzionano regolarmente.</p><button class="text-button" data-target="sicurezza">Vedi stato completo →</button></div>
+            <div class="score-ring"><div><strong id="health-score">--</strong><small>HEALTH SCORE</small></div></div>
+          </article>
+          <article class="scene-card"><p class="eyebrow">SCENA CONSIGLIATA</p><h3>Atmosfera serale</h3><p>Luci calde, temperatura ideale e sicurezza perimetrale.</p><button id="scene-button">Attiva scena</button></article>
+        </div>
+        <div class="section-heading"><div><p class="eyebrow">PANORAMICA</p><h2>La casa, in un colpo d’occhio</h2></div><span class="updated" id="last-update">Aggiornamento…</span></div>
+        <div class="metric-grid">
+          <article class="metric"><span class="metric-icon warm">⌁</span><div><small>CLIMA INTERNO</small><strong>21.5°</strong><p>Umidità 46%</p></div></article>
+          <article class="metric"><span class="metric-icon">◇</span><div><small>DISPOSITIVI</small><strong id="device-count">--</strong><p id="device-subtitle">Caricamento</p></div></article>
+          <article class="metric"><span class="metric-icon safe">◈</span><div><small>SICUREZZA</small><strong id="security-state">Attiva</strong><p id="incident-summary">Nessun avviso</p></div></article>
+          <article class="metric"><span class="metric-icon energy">ϟ</span><div><small>CONSUMO ORA</small><strong>1.8 kW</strong><p class="positive">−12% rispetto a ieri</p></div></article>
+        </div>
+        <div class="content-grid">
+          <article class="panel"><div class="panel-head"><div><p class="eyebrow">AMBIENTI</p><h3>I tuoi spazi</h3></div><button class="text-button" data-target="ambienti">Vedi tutti →</button></div><div id="room-preview" class="room-list"></div></article>
+          <article class="panel"><div class="panel-head"><div><p class="eyebrow">ATTIVITÀ</p><h3>Ultimi eventi</h3></div></div><div id="event-list" class="event-list"></div></article>
+        </div>
+      </section>
+
+      <section class="view" id="ambienti-view">
+        <div class="section-heading"><div><p class="eyebrow">AMBIENTI</p><h2>Ogni spazio, al suo meglio</h2></div><button class="primary-button">+ Nuovo ambiente</button></div>
+        <div id="rooms-grid" class="rooms-grid"></div>
+      </section>
+
+      <section class="view" id="sicurezza-view">
+        <div class="security-hero"><div><p class="eyebrow">PROTEZIONE DOMUS</p><h2 id="security-title">Casa protetta</h2><p>Guardian controlla disponibilità, connessioni e incidenti in tempo reale.</p></div><div class="shield">✓</div></div>
+        <div class="metric-grid security-metrics"><article class="metric"><div><small>INCIDENTI ATTIVI</small><strong id="active-incidents">0</strong><p>Richiedono attenzione</p></div></article><article class="metric"><div><small>DISPOSITIVI OFFLINE</small><strong id="offline-devices">0</strong><p>Su tutti i dispositivi</p></div></article><article class="metric"><div><small>WATCHDOG</small><strong id="watchdog-state">--</strong><p>Monitoraggio interno</p></div></article></div>
+        <article class="panel"><div class="panel-head"><div><p class="eyebrow">CENTRO SICUREZZA</p><h3>Incidenti recenti</h3></div></div><div id="incidents-list" class="incident-list"></div></article>
+      </section>
+
+      <section class="view" id="energia-view">
+        <div class="section-heading"><div><p class="eyebrow">ENERGIA</p><h2>Consumi sotto controllo</h2></div><span class="pill good">−12% QUESTA SETTIMANA</span></div>
+        <div class="energy-grid"><article class="energy-total"><p>Consumo oggi</p><strong>9.4 <small>kWh</small></strong><span>€ 2,61 stimati</span><div class="bar-chart" aria-label="Consumo orario"><i style="height:28%"></i><i style="height:36%"></i><i style="height:30%"></i><i style="height:48%"></i><i style="height:76%"></i><i style="height:62%"></i><i style="height:88%"></i><i style="height:54%"></i><i style="height:42%"></i><i style="height:35%"></i></div></article><article class="panel"><p class="eyebrow">OBIETTIVO MENSILE</p><h3>Ottimo andamento</h3><div class="progress"><span style="width:64%"></span></div><p>192 di 300 kWh</p><small>Sei sulla buona strada per restare sotto il limite.</small></article></div>
+        <article class="panel"><div class="panel-head"><div><p class="eyebrow">CONSUMI</p><h3>Principali categorie</h3></div></div><div class="category-list"><div><span>Climatizzazione</span><b>38%</b></div><div><span>Elettrodomestici</span><b>27%</b></div><div><span>Illuminazione</span><b>18%</b></div><div><span>Altri dispositivi</span><b>17%</b></div></div></article>
+      </section>
+    </main>
+  </div>
+  <nav class="mobile-nav" aria-label="Navigazione mobile"><button class="nav-item active" data-view="home">⌂<small>Home</small></button><button class="nav-item" data-view="ambienti">◇<small>Ambienti</small></button><button class="nav-item" data-view="sicurezza">◈<small>Sicurezza</small></button><button class="nav-item" data-view="energia">ϟ<small>Energia</small></button></nav>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>
