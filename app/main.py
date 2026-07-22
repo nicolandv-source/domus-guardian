@@ -9,6 +9,8 @@ from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 
 from app.adapters.home_assistant import HomeAssistantAdapter
@@ -194,9 +196,17 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+WEB_DIR = Path(__file__).parent / "web"
+app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")
+
 
 @app.get("/")
-def root() -> dict[str, str]:
+def root() -> FileResponse:
+    return FileResponse(WEB_DIR / "index.html")
+
+
+@app.get("/api/v1/status")
+def application_status() -> dict[str, str]:
     return {
         "name": settings.app_name,
         "version": APP_RELEASE_VERSION,
