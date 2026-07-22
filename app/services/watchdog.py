@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import resource
 import sys
 import time
 from collections.abc import Callable
@@ -11,6 +10,11 @@ from datetime import datetime, timedelta, timezone
 
 from app.core.event_bus import EventBus
 from app.ha.websocket import HomeAssistantWebSocketClient
+
+try:
+    import resource
+except ImportError:  # pragma: no cover - resource is unavailable on Windows
+    resource = None
 
 
 logger = logging.getLogger(__name__)
@@ -181,6 +185,9 @@ class WatchdogService:
 
     @staticmethod
     def _memory_mb() -> float:
+        if resource is None:
+            # Home Assistant runs on Linux; Windows is supported for local tests.
+            return 0.0
         value = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
         # Linux reports KiB while macOS reports bytes.
         if sys.platform == "darwin":
