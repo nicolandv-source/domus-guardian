@@ -3,6 +3,10 @@
 Backend FastAPI per monitorare dispositivi, disponibilità e incidenti di una
 installazione Home Assistant OS.
 
+Versione corrente: **1.0.0**. La v1 consolida WebSocket, persistenza,
+stabilizzazione di dispositivi instabili, health pesato, notifiche e watchdog
+interno in un unico servizio locale.
+
 ## Architettura
 
 Gli eventi `state_changed` seguono questo percorso:
@@ -50,6 +54,9 @@ l'EventBus, il ritardo del loop async e la memoria del processo. In caso di DB
 non disponibile resetta solo il pool SQLAlchemy; se il WebSocket rimane senza
 eventi oltre la soglia richiede una riconnessione sicura. Lo stato è disponibile
 in `/api/v1/watchdog/health` e come `watchdog_status` nell'health esistente.
+I worker di debounce e retry notifiche restano attivi anche se una singola
+operazione transitoria fallisce: l'errore viene registrato senza esporre dati
+sensibili, quindi il ciclo successivo può recuperare autonomamente.
 
 ## Installazione Home Assistant
 

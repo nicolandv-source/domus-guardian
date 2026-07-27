@@ -35,7 +35,7 @@ from app.settings import get_settings
 logger = logging.getLogger(__name__)
 logging.getLogger("app.ha.websocket").setLevel(logging.INFO)
 settings = get_settings()
-APP_RELEASE_VERSION = "0.7.0"
+APP_RELEASE_VERSION = settings.app_version
 
 
 def debounce_window() -> timedelta:
@@ -77,20 +77,36 @@ def watchdog_options() -> tuple[int, timedelta, int]:
     return interval_seconds, timedelta(minutes=stale_minutes), memory_threshold_mb
 
 
-async def run_debounce_worker(service: DeviceService) -> None:
+async def run_debounce_worker(
+    service: DeviceService, *, interval_seconds: float = 1.0
+) -> None:
+    """Apply due debounced state changes without letting one DB error kill it."""
     while True:
-        changes = service.flush_debounce()
-        if changes:
-            logger.info("Applicati %s cambi stabilizzati", len(changes))
-        await asyncio.sleep(1)
+        try:
+            changes = service.flush_debounce()
+            if changes:
+                logger.info("Applicati %s cambi stabilizzati", len(changes))
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("device_debounce_worker_failed")
+        await asyncio.sleep(interval_seconds)
 
 
-async def run_notification_retry_worker(engine: NotificationEngine) -> None:
+async def run_notification_retry_worker(
+    engine: NotificationEngine, *, interval_seconds: float = 60.0
+) -> None:
+    """Retry transient notification failures while keeping the worker alive."""
     while True:
-        await asyncio.sleep(60)
-        retries = await engine.retry_failed()
-        if retries:
-            logger.info("Ritentate %s notifiche DOMUS", retries)
+        await asyncio.sleep(interval_seconds)
+        try:
+            retries = await engine.retry_failed()
+            if retries:
+                logger.info("Ritentate %s notifiche DOMUS", retries)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("notification_retry_worker_failed")
 
 
 @asynccontextmanager

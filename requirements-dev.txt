@@ -1,4 +1,7 @@
 -r requirements.txt
 pytest>=8.3,<9
 pytest-asyncio>=0.25,<1
-ruff>=0.11,<1
+# Ruff 0.11.13 is the version used to validate the v1 baseline.  Pinning it
+# keeps a clean checkout reproducible instead of changing lint behavior when
+# a later major rule set is released.
+ruff==0.11.13

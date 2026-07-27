@@ -5,7 +5,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     app_name: str = "DOMUS Guardian"
-    app_version: str = "0.3.0"
+    # ``APP_VERSION`` is supplied by the Home Assistant App manifest.  Keeping
+    # a production-safe default makes local tests and manual starts consistent
+    # with the packaged release too.
+    app_version: str = "1.0.0"
 
     database_url: str
 

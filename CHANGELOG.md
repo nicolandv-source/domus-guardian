@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.0
+
+- Allineata la versione dell'App, delle API e della configurazione di runtime.
+- Resi resilienti i worker di debounce e retry notifiche: un errore transitorio
+  viene registrato e non interrompe il monitoraggio in background.
+- Corretta la dashboard web: quando le API non sono raggiungibili non mostra più
+  uno stato falsamente "Online" o un watchdog sano.
+- Estesa la suite di regressione per worker e dashboard; 29 test automatici.
+
 ## 0.7.0
 
 - Aggiunto watchdog interno per DB, WebSocket, EventBus, loop async e memoria.
