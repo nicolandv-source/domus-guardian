@@ -1,5 +1,5 @@
 name: DOMUS Guardian
-version: "1.0.0"
+version: "1.0.1"
 slug: domus_guardian
 description: Motore health, incidenti e notifiche per Home Assistant
 
@@ -22,7 +22,7 @@ ports_description:
 webui: "http://[HOST]:[PORT:8000]/docs"
 
 environment:
-  APP_VERSION: "1.0.0"
+  APP_VERSION: "1.0.1"
   HA_URL: "http://supervisor/core"
   HA_WS_URL: "ws://supervisor/core/websocket"
   HA_REQUEST_TIMEOUT_SECONDS: "10"

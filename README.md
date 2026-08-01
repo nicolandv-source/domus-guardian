@@ -3,7 +3,7 @@
 Backend FastAPI per monitorare dispositivi, disponibilità e incidenti di una
 installazione Home Assistant OS.
 
-Versione corrente: **1.0.0**. La v1 consolida WebSocket, persistenza,
+Versione corrente: **1.0.1**. La v1 consolida WebSocket, persistenza,
 stabilizzazione di dispositivi instabili, health pesato, notifiche e watchdog
 interno in un unico servizio locale.
 
