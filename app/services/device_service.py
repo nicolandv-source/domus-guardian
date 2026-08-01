@@ -9,9 +9,10 @@ from sqlalchemy import select
 
 from app.dto import StateChangedDTO
 from app.core.event_bus import EventBus
-from app.models import Device, Incident
+from app.models import Device, Incident, MaintenanceWindow
 from app.repositories.devices import DeviceRepository
 from app.repositories.incidents import IncidentRepository
+from app.repositories.maintenance import MaintenanceRepository
 from app.services.device_debounce import DeviceDebouncer, DeviceStateChange
 from app.services.device_grouping import DeviceGrouping
 from app.services.health_weights import DeviceProfile
@@ -30,6 +31,7 @@ class DeviceService:
         debouncer: DeviceDebouncer,
         event_bus: EventBus | None = None,
         profile_for: Callable[[list[Device]], DeviceProfile] | None = None,
+        maintenance_repository: MaintenanceRepository | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._devices = device_repository
@@ -38,6 +40,7 @@ class DeviceService:
         self._debouncer = debouncer
         self._event_bus = event_bus
         self._profile_for = profile_for
+        self._maintenance = maintenance_repository or MaintenanceRepository()
 
     def register_entity_mapping(self, entity_id: str, device_id: str | None) -> None:
         self._grouping.register_entity_mapping(entity_id, device_id)
@@ -52,6 +55,8 @@ class DeviceService:
         with self._session_factory() as session:
             with session.begin():
                 self._devices.upsert(session, dto)
+                if not self._monitors_availability(dto):
+                    return None
                 grouped = self._grouping.update(dto)
                 change = self._debouncer.process_state_change(
                     grouped.device_id,
@@ -86,12 +91,20 @@ class DeviceService:
         entity_ids = {
             entity_id for grouped in grouped_devices for entity_id in grouped.entity_ids
         }
+        now = datetime.now(timezone.utc)
         with self._session_factory() as session:
             known_devices = {
                 device.entity_id: device
                 for device in session.scalars(
                     select(Device).where(Device.entity_id.in_(entity_ids))
                 )
+            }
+            maintenance_by_device = {
+                grouped.device_id: self._maintenance.get_active(
+                    session, grouped.device_id, now
+                )
+                is not None
+                for grouped in grouped_devices
             }
         result = []
         for grouped in grouped_devices:
@@ -105,6 +118,7 @@ class DeviceService:
                 else None,
                 "debounce_until": state.debounce_until if state else None,
                 "last_change_time": state.last_change_time if state else None,
+                "maintenance_active": maintenance_by_device[grouped.device_id],
             }
             if profile_for is not None:
                 profile = profile_for(
@@ -124,11 +138,49 @@ class DeviceService:
             result.append(item)
         return result
 
+    def activate_maintenance(
+        self,
+        device_id: str,
+        reason: str,
+        ends_at: datetime | None = None,
+        now: datetime | None = None,
+    ) -> MaintenanceWindow:
+        now = now or datetime.now(timezone.utc)
+        events: list[tuple[str, dict[str, object]]] = []
+        with self._session_factory() as session:
+            with session.begin():
+                window = self._maintenance.activate(
+                    session, device_id=device_id, reason=reason, started_at=now, ends_at=ends_at
+                )
+                grouped = self._grouping.snapshot(device_id)
+                keys = [device_id, *(grouped.entity_ids if grouped else ())]
+                resolved = self._incidents.resolve_availability(session, keys, now)
+                events.extend(("incident_resolved", self._incident_payload(item)) for item in resolved)
+        self._publish_events(events)
+        return window
+
+    def deactivate_maintenance(
+        self, device_id: str, now: datetime | None = None
+    ) -> MaintenanceWindow | None:
+        now = now or datetime.now(timezone.utc)
+        with self._session_factory() as session:
+            with session.begin():
+                return self._maintenance.deactivate(session, device_id, now)
+
+    def list_maintenance(self, now: datetime | None = None) -> list[MaintenanceWindow]:
+        now = now or datetime.now(timezone.utc)
+        with self._session_factory() as session:
+            with session.begin():
+                return self._maintenance.list(session, now)
+
     def _apply_change(
         self, session: Session, change: DeviceStateChange
     ) -> list[tuple[str, dict[str, object]]]:
         grouped = self._grouping.snapshot(change.device_id)
         if grouped is None:
+            return []
+        if self._maintenance.get_active(session, change.device_id, change.changed_at):
+            logger.info("Disponibilità esclusa per manutenzione: %s", change.device_id)
             return []
         device = self._devices.get_by_entity_id(
             session,
@@ -191,3 +243,9 @@ class DeviceService:
         if state is None:
             return None
         return "available" if state else "unavailable"
+
+    @staticmethod
+    def _monitors_availability(dto: StateChangedDTO) -> bool:
+        # TTS/STT are service entities. They are commonly unavailable while idle
+        # and do not represent a physical device health condition.
+        return dto.domain not in {"tts", "stt"}

@@ -115,3 +115,63 @@ def test_stable_recovery_resolves_group_incident_once() -> None:
     assert incident is not None
     assert incident.status == "resolved"
     assert incident.resolved_at is not None
+
+
+def test_maintenance_resolves_existing_incident_and_suppresses_new_one() -> None:
+    service, factory = make_service()
+
+    service.handle_state_changed(event("switch.box3", "on", "box-3"), BASE_TIME)
+    service.handle_state_changed(
+        event("switch.box3", "unavailable", "box-3"), BASE_TIME + timedelta(seconds=1)
+    )
+    service.flush_debounce(BASE_TIME + timedelta(seconds=31))
+
+    window = service.activate_maintenance(
+        "box-3", "Spento volontariamente", BASE_TIME + timedelta(days=1), BASE_TIME + timedelta(seconds=32)
+    )
+    service.handle_state_changed(
+        event("switch.box3", "on", "box-3"), BASE_TIME + timedelta(seconds=33)
+    )
+    service.flush_debounce(BASE_TIME + timedelta(seconds=63))
+    service.handle_state_changed(
+        event("switch.box3", "unavailable", "box-3"), BASE_TIME + timedelta(seconds=64)
+    )
+    service.flush_debounce(BASE_TIME + timedelta(seconds=94))
+
+    with factory() as session:
+        incidents = session.scalars(select(Incident)).all()
+
+    assert window.active is True
+    assert len(incidents) == 1
+    assert incidents[0].status == "resolved"
+
+
+def test_expired_maintenance_restores_availability_monitoring() -> None:
+    service, factory = make_service()
+    service.handle_state_changed(event("switch.box3", "on", "box-3"), BASE_TIME)
+    service.activate_maintenance(
+        "box-3", "Finestra breve", BASE_TIME + timedelta(seconds=10), BASE_TIME
+    )
+    service.handle_state_changed(
+        event("switch.box3", "unavailable", "box-3"), BASE_TIME + timedelta(seconds=11)
+    )
+    service.flush_debounce(BASE_TIME + timedelta(seconds=41))
+
+    with factory() as session:
+        incident = session.scalar(select(Incident))
+
+    assert incident is not None
+    assert incident.status == "open"
+
+
+def test_tts_and_stt_service_entities_do_not_create_availability_incidents() -> None:
+    service, factory = make_service()
+    service.handle_state_changed(event("tts.google_translate", "unavailable"), BASE_TIME)
+    service.handle_state_changed(event("stt.whisper", "unavailable"), BASE_TIME)
+    service.flush_debounce(BASE_TIME + timedelta(seconds=60))
+
+    with factory() as session:
+        incidents = session.scalars(select(Incident)).all()
+
+    assert incidents == []
+    assert service.diagnostics() == []

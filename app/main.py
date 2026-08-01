@@ -6,9 +6,11 @@ import os
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Optional
 
 import httpx
 from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, Field
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
@@ -18,7 +20,7 @@ from app.adapters.home_assistant_notify import HomeAssistantNotifyAdapter
 from app.core.event_bus import EventBus
 from app.database import SessionLocal, ping_database, reset_database_pool
 from app.ha.websocket import HomeAssistantWebSocketClient
-from app.models import Device, Incident, Notification
+from app.models import Device, Incident, MaintenanceWindow, Notification
 from app.repositories.devices import DeviceRepository
 from app.repositories.incidents import IncidentRepository
 from app.repositories.notifications import NotificationRepository
@@ -216,6 +218,22 @@ WEB_DIR = Path(__file__).parent / "web"
 app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")
 
 
+class MaintenanceRequest(BaseModel):
+    reason: str = Field(min_length=1, max_length=2000)
+    ends_at: Optional[datetime] = None
+
+
+def maintenance_to_dict(window: MaintenanceWindow) -> dict[str, object]:
+    return {
+        "device_id": window.device_id,
+        "reason": window.reason,
+        "started_at": window.started_at,
+        "ends_at": window.ends_at,
+        "active": window.active,
+        "ended_at": window.ended_at,
+    }
+
+
 @app.get("/")
 def root() -> FileResponse:
     return FileResponse(WEB_DIR / "index.html")
@@ -296,6 +314,35 @@ def list_devices() -> list[dict[str, object]]:
 @app.get("/api/v1/devices/debounced")
 def list_debounced_devices() -> list[dict[str, object]]:
     return app.state.device_service.diagnostics(app.state.health_weights.profile_for)
+
+
+@app.get("/api/v1/maintenance")
+def list_maintenance() -> list[dict[str, object]]:
+    return [
+        maintenance_to_dict(window)
+        for window in app.state.device_service.list_maintenance()
+    ]
+
+
+@app.put("/api/v1/maintenance/{device_id}")
+def activate_maintenance(
+    device_id: str, request: MaintenanceRequest
+) -> dict[str, object]:
+    now = datetime.now(timezone.utc)
+    if request.ends_at is not None and request.ends_at <= now:
+        raise HTTPException(status_code=422, detail="La scadenza deve essere futura")
+    window = app.state.device_service.activate_maintenance(
+        device_id, request.reason, request.ends_at, now
+    )
+    return maintenance_to_dict(window)
+
+
+@app.delete("/api/v1/maintenance/{device_id}")
+def deactivate_maintenance(device_id: str) -> dict[str, object]:
+    window = app.state.device_service.deactivate_maintenance(device_id)
+    if window is None:
+        raise HTTPException(status_code=404, detail="Manutenzione non trovata")
+    return maintenance_to_dict(window)
 
 
 @app.get("/api/v1/health/weights")

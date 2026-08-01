@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.1
+
+- Aggiunte finestre di manutenzione/assenza per `device_id`, con motivo,
+  inizio, scadenza opzionale e API per attivazione, elenco e disattivazione.
+- Durante una finestra attiva DOMUS esclude il dispositivo da health, incidenti
+  e notifiche; gli incidenti aperti vengono risolti in modo controllato.
+- Ripristinato automaticamente il monitoraggio alla scadenza o disattivazione.
+- Escluse le entità di servizio TTS/STT dal monitoraggio di disponibilità.
+
 ## 1.0.0
 
 - Allineata la versione dell'App, delle API e della configurazione di runtime.

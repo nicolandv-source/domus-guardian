@@ -87,6 +87,31 @@ class Incident(Base):
     )
 
 
+class MaintenanceWindow(Base):
+    """A deliberate, temporary exclusion from availability monitoring."""
+
+    __tablename__ = "maintenance_windows"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    device_id: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ends_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=true()
+    )
+    ended_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
 class Notification(Base):
     __tablename__ = "notifications"
 
@@ -128,3 +153,5 @@ Index("ix_incidents_status", Incident.status)
 Index("ix_incidents_severity", Incident.severity)
 Index("ix_notifications_incident", Notification.incident_id)
 Index("ix_notifications_status", Notification.status)
+Index("ix_maintenance_windows_active", MaintenanceWindow.active)
+Index("ix_maintenance_windows_ends_at", MaintenanceWindow.ends_at)

@@ -95,6 +95,22 @@ def test_critical_devices_have_high_health_impact() -> None:
     assert snapshot.status == "critical"
 
 
+def test_devices_in_maintenance_are_excluded_from_health_score() -> None:
+    devices = [
+        {
+            "last_state": "unavailable",
+            "category": "critical",
+            "weight": 20.0,
+            "include_in_score": True,
+            "maintenance_active": True,
+        }
+    ]
+
+    snapshot = HealthEngine(FakeDeviceService(devices), weights()).snapshot(True)
+    assert snapshot.score == 100
+    assert snapshot.offline_devices == 0
+
+
 def test_profile_rules_use_domain_device_class_and_name() -> None:
     policy = weights()
 

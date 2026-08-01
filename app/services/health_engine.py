@@ -54,6 +54,7 @@ class HealthEngine:
             device
             for device in devices
             if device["last_state"] in {"available", "unavailable"}
+            and not device.get("maintenance_active", False)
         ]
         scored_devices = [
             device for device in stable_devices if device["include_in_score"]

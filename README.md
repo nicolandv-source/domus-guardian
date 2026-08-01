@@ -41,6 +41,25 @@ peso dei dispositivi offline e il peso totale dei dispositivi stabilizzati;
 TV, TTS e dispositivi di test incidono quindi molto meno di porte, allarmi e
 luci principali.
 
+Le entità nei domini di servizio `tts` e `stt` sono escluse dal monitoraggio di
+disponibilità: il loro stato normalmente `unavailable` non rappresenta un
+dispositivo fisico offline e non genera incidenti.
+
+## Manutenzione / assenza programmata
+
+Un dispositivo fisico spento intenzionalmente può essere messo in manutenzione
+tramite il suo `device_id` Home Assistant. La finestra conserva motivo, inizio
+e scadenza facoltativa. Finché è attiva, il dispositivo non influenza l'health
+score e non apre o notifica incidenti di disponibilità; gli incidenti aperti
+sono risolti in modo controllato al momento dell'attivazione. Alla scadenza o
+alla disattivazione il monitoraggio riprende automaticamente.
+
+API minime:
+
+- `GET /api/v1/maintenance`
+- `PUT /api/v1/maintenance/{device_id}` con `{"reason":"spento volontariamente","ends_at":"2026-08-03T08:00:00+00:00"}`
+- `DELETE /api/v1/maintenance/{device_id}`
+
 ## Notifiche incidenti
 
 DOMUS crea notifiche persistenti in Home Assistant per i nuovi incidenti
@@ -84,6 +103,7 @@ nel repository.
 - `/api/v1/devices`
 - `/api/v1/devices/debounced`
 - `/api/v1/incidents`
+- `/api/v1/maintenance`
 - `/api/v1/watchdog/health`
 
 ## Test locali
