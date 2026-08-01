@@ -86,7 +86,10 @@ async def test_authenticates_subscribes_and_publishes_event() -> None:
     bus = EventBus()
     bus.subscribe("state_changed", received.append)
 
-    def connect_factory(*_, **__):
+    connect_kwargs = {}
+
+    def connect_factory(*_, **kwargs):
+        connect_kwargs.update(kwargs)
         return FakeConnection(websocket)
 
     client = HomeAssistantWebSocketClient(
@@ -103,4 +106,7 @@ async def test_authenticates_subscribes_and_publishes_event() -> None:
         {"id": 2, "type": "get_states"},
         {"id": 3, "type": "subscribe_events", "event_type": "state_changed"},
     ]
+    assert connect_kwargs["additional_headers"] == {
+        "Authorization": "Bearer secret"
+    }
     assert received[0]["data"]["entity_id"] == "sensor.domus_test"

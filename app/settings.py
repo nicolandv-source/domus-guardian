@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     # ``APP_VERSION`` is supplied by the Home Assistant App manifest.  Keeping
     # a production-safe default makes local tests and manual starts consistent
     # with the packaged release too.
-    app_version: str = "1.0.1"
+    app_version: str = "1.0.2"
 
     database_url: str
 

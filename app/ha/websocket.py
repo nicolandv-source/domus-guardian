@@ -59,6 +59,12 @@ class HomeAssistantWebSocketClient:
         try:
             async with self._connect_factory(
                 self._url,
+                # The Supervisor proxy validates its bearer token at the HTTP
+                # upgrade boundary. Home Assistant Core then performs the
+                # standard WebSocket `auth` exchange below.
+                additional_headers={
+                    "Authorization": f"Bearer {self._token}",
+                },
                 ping_interval=20,
                 ping_timeout=20,
                 close_timeout=10,

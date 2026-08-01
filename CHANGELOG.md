@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.2
+
+- Inviato il bearer token anche nell'upgrade WebSocket verso il proxy
+  Supervisor, mantenendo il normale handshake `auth` di Home Assistant.
+
 ## 1.0.1
 
 - Aggiunte finestre di manutenzione/assenza per `device_id`, con motivo,
