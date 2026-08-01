@@ -1,3 +1,4 @@
+import asyncio
 import json
 
 import pytest
@@ -110,3 +111,27 @@ async def test_authenticates_subscribes_and_publishes_event() -> None:
         "Authorization": "Bearer secret"
     }
     assert received[0]["data"]["entity_id"] == "sensor.domus_test"
+
+
+@pytest.mark.asyncio
+async def test_reconnects_after_a_transient_websocket_failure(monkeypatch) -> None:
+    client = HomeAssistantWebSocketClient("ws://test", "secret", EventBus())
+    calls = 0
+
+    async def fake_run_once() -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("connection dropped")
+        raise asyncio.CancelledError
+
+    async def no_wait(_seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(client, "run_once", fake_run_once)
+    monkeypatch.setattr(asyncio, "sleep", no_wait)
+
+    with pytest.raises(asyncio.CancelledError):
+        await client.run_forever()
+
+    assert calls == 2

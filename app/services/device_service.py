@@ -45,6 +45,9 @@ class DeviceService:
     def register_entity_mapping(self, entity_id: str, device_id: str | None) -> None:
         self._grouping.register_entity_mapping(entity_id, device_id)
 
+    def is_physical_entity(self, entity_id: str) -> bool:
+        return self._grouping.is_physical_entity(entity_id)
+
     def handle_state_changed(
         self,
         dto: StateChangedDTO,
@@ -67,6 +70,53 @@ class DeviceService:
                     events.extend(self._apply_change(session, change))
         self._publish_events(events)
         return change
+
+    def reconcile_open_incidents(
+        self, now: datetime | None = None
+    ) -> list[Incident]:
+        """Resolve only availability incidents contradicted by persisted HA state.
+
+        State snapshots are written before availability processing, so this is
+        safe during startup and after every WebSocket state refresh.  It never
+        deletes history and deliberately leaves genuinely unavailable devices
+        (and active maintenance windows) untouched.
+        """
+        now = now or datetime.now(timezone.utc)
+        events: list[tuple[str, dict[str, object]]] = []
+        resolved: list[Incident] = []
+        with self._session_factory() as session:
+            with session.begin():
+                for incident in self._incidents.list_open_availability(session):
+                    grouped = self._grouping.snapshot(incident.entity_id)
+                    group_id = grouped.device_id if grouped is not None else incident.entity_id
+                    if self._maintenance.get_active(session, group_id, now):
+                        continue
+
+                    available = (
+                        grouped.is_available
+                        if grouped is not None
+                        else self._incident_device_available(incident)
+                    )
+                    # Historical availability incidents for UI helpers are
+                    # invalid: helpers without a registry device never enter
+                    # physical-device monitoring.
+                    is_helper = (
+                        grouped is None
+                        and incident.device is not None
+                        and incident.entity_id == incident.device.entity_id
+                        and not self._grouping.is_physical_entity(incident.entity_id)
+                    )
+                    if available or is_helper:
+                        incident.status = "resolved"
+                        incident.resolved_at = now
+                        resolved.append(incident)
+                session.flush()
+                events.extend(
+                    ("incident_resolved", self._incident_payload(incident))
+                    for incident in resolved
+                )
+        self._publish_events(events)
+        return resolved
 
     def flush_debounce(
         self,
@@ -249,3 +299,6 @@ class DeviceService:
         # TTS/STT are service entities. They are commonly unavailable while idle
         # and do not represent a physical device health condition.
         return dto.domain not in {"tts", "stt"}
+
+    def _incident_device_available(self, incident: Incident) -> bool:
+        return incident.device is not None and incident.device.is_available

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Optional
 
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -111,6 +111,20 @@ async def run_notification_retry_worker(
             logger.exception("notification_retry_worker_failed")
 
 
+async def run_reconciliation_worker(
+    service: DeviceService, *, interval_seconds: float = 60.0
+) -> None:
+    """Periodically remove only availability incidents contradicted by HA state."""
+    while True:
+        try:
+            service.reconcile_open_incidents()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("incident_reconciliation_worker_failed")
+        await asyncio.sleep(interval_seconds)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     event_bus = EventBus()
@@ -139,6 +153,7 @@ async def lifespan(app: FastAPI):
             timeout_seconds=settings.ha_request_timeout_seconds,
         ),
         policy=notification_policy(),
+        loop=asyncio.get_running_loop(),
     )
     notification_engine.subscribe()
 
@@ -158,6 +173,10 @@ async def lifespan(app: FastAPI):
     notification_retry_task = asyncio.create_task(
         run_notification_retry_worker(notification_engine),
         name="notification-retry-worker",
+    )
+    reconciliation_task = asyncio.create_task(
+        run_reconciliation_worker(service),
+        name="incident-reconciliation-worker",
     )
     watchdog_interval, websocket_stale_after, watchdog_memory_threshold = (
         watchdog_options()
@@ -182,6 +201,7 @@ async def lifespan(app: FastAPI):
     app.state.websocket_task = websocket_task
     app.state.debounce_task = debounce_task
     app.state.notification_retry_task = notification_retry_task
+    app.state.reconciliation_task = reconciliation_task
     app.state.watchdog = watchdog
     app.state.watchdog_task = watchdog_task
 
@@ -194,6 +214,7 @@ async def lifespan(app: FastAPI):
             websocket_task,
             debounce_task,
             notification_retry_task,
+            reconciliation_task,
             watchdog_task,
         ):
             task.cancel()
@@ -201,6 +222,7 @@ async def lifespan(app: FastAPI):
             websocket_task,
             debounce_task,
             notification_retry_task,
+            reconciliation_task,
             watchdog_task,
         ):
             with suppress(asyncio.CancelledError):
@@ -351,11 +373,19 @@ def list_health_weights() -> list[dict[str, object]]:
 
 
 @app.get("/api/v1/incidents")
-def list_incidents() -> list[dict[str, object]]:
+def list_incidents(
+    status: str | None = Query(default=None, max_length=32),
+    severity: str | None = Query(default=None, max_length=32),
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+) -> list[dict[str, object]]:
     with SessionLocal() as session:
-        incidents = session.scalars(
-            select(Incident).order_by(Incident.opened_at.desc())
-        ).all()
+        statement = select(Incident).order_by(Incident.opened_at.desc())
+        if status is not None:
+            statement = statement.where(Incident.status == status)
+        if severity is not None:
+            statement = statement.where(Incident.severity == severity)
+        incidents = session.scalars(statement.offset(offset).limit(limit)).all()
         return [
             {
                 "id": incident.id,
@@ -418,7 +448,16 @@ def health() -> dict[str, object]:
         logger.exception("Calcolo health DOMUS fallito")
         database_error = type(exc).__name__
 
-    snapshot = app.state.health_engine.snapshot(database_connected)
+    # Keep persistent incidents and health in agreement even immediately after
+    # a process restart, when in-memory debounce state has not been rebuilt.
+    app.state.device_service.reconcile_open_incidents()
+    with SessionLocal() as session:
+        incidents = IncidentRepository().list_open_availability(session)
+        snapshot = app.state.health_engine.snapshot_from_incidents(
+            database_connected,
+            incidents,
+            app.state.device_service.diagnostics(app.state.health_weights.profile_for),
+        )
     return {
         "score": snapshot.score,
         "status": snapshot.status,

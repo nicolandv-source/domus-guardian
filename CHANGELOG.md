@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.0.3 - unreleased
+
+- Corretto il debounce availability: un recupero prima della scadenza annulla
+  in modo deterministico la transizione offline pendente.
+- Aggiunta riconciliazione all'avvio e periodica degli incidenti availability
+  rispetto agli stati HA persistiti, senza cancellare lo storico.
+- Health e API incidenti ora usano gli incidenti persistiti riconciliati; le API
+  supportano filtri `status`, `severity`, `limit` e `offset`.
+- Le notifiche originate da endpoint sincroni sono programmate sul loop
+  applicativo noto, senza errori di event loop assente.
+- Le entità helper senza device nel registro Home Assistant sono escluse dal
+  monitoraggio availability; i gruppi UI non diventano dispositivi fisici.
+
 ## 1.0.2
 
 - Inviato il bearer token anche nell'upgrade WebSocket verso il proxy

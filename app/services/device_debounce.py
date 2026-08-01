@@ -37,6 +37,11 @@ class DeviceDebouncer:
             entry = self._states.setdefault(device_id, DeviceDebounceState())
             if entry.last_state is None:
                 if state:
+                    # A startup ``unavailable`` can be superseded by the first
+                    # available state before its debounce window expires.  Clear
+                    # that candidate explicitly: otherwise ``flush_due`` would
+                    # later commit an obsolete offline transition.
+                    self._clear_pending(entry)
                     entry.last_state = True
                     entry.last_change_time = now
                 else:

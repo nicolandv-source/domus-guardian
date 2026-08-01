@@ -32,3 +32,29 @@ def test_debounce_cancels_pending_state_when_device_recovers() -> None:
     state = debouncer.diagnostics()["device-1"]
     assert state.last_state is True
     assert state.pending_state is None
+
+
+def test_initial_unavailable_then_available_cancels_pending_transition() -> None:
+    now = datetime(2026, 8, 2, 12, tzinfo=timezone.utc)
+    debouncer = DeviceDebouncer(timedelta(seconds=45))
+
+    debouncer.process_state_change("device-1", False, now)
+    debouncer.process_state_change("device-1", True, now + timedelta(seconds=10))
+
+    assert debouncer.flush_due(now + timedelta(seconds=46)) == []
+    state = debouncer.diagnostics()["device-1"]
+    assert state.last_state is True
+    assert state.pending_state is None
+
+
+def test_rapid_double_change_only_commits_latest_stable_state() -> None:
+    now = datetime(2026, 8, 2, 12, tzinfo=timezone.utc)
+    debouncer = DeviceDebouncer(timedelta(seconds=45))
+
+    debouncer.process_state_change("device-1", True, now)
+    debouncer.process_state_change("device-1", False, now + timedelta(seconds=1))
+    debouncer.process_state_change("device-1", True, now + timedelta(seconds=2))
+    debouncer.process_state_change("device-1", False, now + timedelta(seconds=3))
+
+    changes = debouncer.flush_due(now + timedelta(seconds=48))
+    assert [(change.old_state, change.new_state) for change in changes] == [(True, False)]

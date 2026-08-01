@@ -3,8 +3,16 @@
 Backend FastAPI per monitorare dispositivi, disponibilità e incidenti di una
 installazione Home Assistant OS.
 
-Versione corrente: **1.0.2**. La v1 consolida WebSocket, persistenza,
+Versione corrente: **1.0.3** (in preparazione). La v1 consolida WebSocket, persistenza,
 stabilizzazione di dispositivi instabili, health pesato, notifiche e watchdog
+
+### Monitoraggio availability
+
+DOMUS Guardian monitora solo le entità associate a un dispositivo nel registro
+di Home Assistant (o gli eventi che riportano esplicitamente un `device_id`).
+Gruppi e helper UI senza un dispositivo fisico non aprono incidenti; la
+disponibilità di un dispositivo con più entità è aggregata e rimane valida se
+almeno una delle sue entità è disponibile.
 interno in un unico servizio locale.
 
 ## Architettura

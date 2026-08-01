@@ -13,6 +13,14 @@ AVAILABILITY_KIND = "availability"
 
 
 class IncidentRepository:
+    def list_open_availability(self, session: Session) -> list[Incident]:
+        return session.scalars(
+            select(Incident).where(
+                Incident.kind == AVAILABILITY_KIND,
+                Incident.status == "open",
+            )
+        ).all()
+
     def get_open_availability(
         self,
         session: Session,

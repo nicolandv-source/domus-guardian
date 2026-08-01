@@ -23,12 +23,20 @@ class HomeAssistantAdapter:
             "entity_registry_loaded",
             self.handle_entity_registry_loaded,
         )
+        self._event_bus.subscribe(
+            "ha_state_snapshot_loaded",
+            self.handle_state_snapshot_loaded,
+        )
 
     def unsubscribe(self) -> None:
         self._event_bus.unsubscribe("state_changed", self.handle_state_changed)
         self._event_bus.unsubscribe(
             "entity_registry_loaded",
             self.handle_entity_registry_loaded,
+        )
+        self._event_bus.unsubscribe(
+            "ha_state_snapshot_loaded",
+            self.handle_state_snapshot_loaded,
         )
 
     def handle_entity_registry_loaded(self, payload: dict[str, Any]) -> None:
@@ -38,9 +46,21 @@ class HomeAssistantAdapter:
                 entry.get("device_id"),
             )
 
+    def handle_state_snapshot_loaded(self, _: dict[str, Any]) -> None:
+        self._device_service.reconcile_open_incidents()
+
     def handle_state_changed(self, event: dict[str, Any]) -> None:
         dto = self.to_dto(event)
         if dto is None:
+            return
+        # Availability monitoring is reserved for registry-backed physical
+        # devices.  A live event normally has no device_id, therefore accept it
+        # only after the registry mapping has been loaded.  This prevents UI
+        # helpers/groups from becoming independent "devices".
+        if (
+            dto.device_id is None
+            and not self._device_service.is_physical_entity(dto.entity_id)
+        ):
             return
         self._device_service.handle_state_changed(dto)
 

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from app.services.device_service import DeviceService
 from app.services.health_weights import HealthWeights
+from app.models import Incident
 
 
 @dataclass(frozen=True)
@@ -83,6 +84,52 @@ class HealthEngine:
             critical_incidents=critical_incidents,
             warning_incidents=warning_incidents,
             offline_devices=offline_devices,
+            total_weight=total_weight,
+            offline_weight=offline_weight,
+        )
+
+    def snapshot_from_incidents(
+        self,
+        database_connected: bool,
+        incidents: list[Incident],
+        reconciled_devices: list[dict[str, object]] | None = None,
+    ) -> HealthSnapshot:
+        """Calculate health from the reconciled persistent incident set."""
+        physical_incidents = [
+            incident
+            for incident in incidents
+            if incident.kind == "availability" and incident.status == "open"
+        ]
+        offline_profiles = [
+            self._weights.profile_for([incident.device])
+            for incident in physical_incidents
+            if incident.device is not None
+        ]
+        scored_devices = [
+            device
+            for device in reconciled_devices or []
+            if device.get("include_in_score")
+            and not device.get("maintenance_active", False)
+        ]
+        total_weight = sum(float(device["weight"]) for device in scored_devices)
+        # During the very first moments of startup the WebSocket snapshot may
+        # not yet have populated diagnostics.  Existing reconciled incidents
+        # remain authoritative rather than incorrectly reporting a perfect 100.
+        if not scored_devices:
+            total_weight = sum(profile.weight for profile in offline_profiles)
+        offline_weight = sum(profile.weight for profile in offline_profiles)
+        critical = sum(profile.category == "critical" for profile in offline_profiles)
+        warning = sum(profile.category == "important" for profile in offline_profiles)
+        score, status = self._calculate_weighted_score_status(
+            database_connected, total_weight, offline_weight
+        )
+        return HealthSnapshot(
+            score=score,
+            status=status,
+            active_incidents=len(physical_incidents),
+            critical_incidents=critical,
+            warning_incidents=warning,
+            offline_devices=len(physical_incidents),
             total_weight=total_weight,
             offline_weight=offline_weight,
         )

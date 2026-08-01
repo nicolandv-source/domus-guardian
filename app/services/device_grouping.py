@@ -57,6 +57,11 @@ class DeviceGrouping:
                 for device_id, group in sorted(self._groups.items())
             ]
 
+    def is_physical_entity(self, entity_id: str) -> bool:
+        """Whether HA's entity registry associated this entity with a device."""
+        with self._lock:
+            return entity_id in self._entity_to_device
+
     def _resolve_device_id(self, dto: StateChangedDTO) -> str:
         device_id = dto.device_id or self._entity_to_device.get(dto.entity_id)
         device_id = device_id or dto.entity_id

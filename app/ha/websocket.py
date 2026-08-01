@@ -134,6 +134,7 @@ class HomeAssistantWebSocketClient:
                                 },
                             },
                         )
+                    self._event_bus.publish("ha_state_snapshot_loaded", {})
                     logger.info("Stati iniziali Home Assistant caricati")
                 else:
                     logger.warning(

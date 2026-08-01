@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+import asyncio
 
 import pytest
 from sqlalchemy import create_engine, select
@@ -150,3 +151,26 @@ async def test_failed_delivery_is_retried_without_exposing_error() -> None:
         )
         assert notification.status == "sent"
         assert notification.attempts == 2
+
+
+@pytest.mark.asyncio
+async def test_resolved_event_from_sync_thread_uses_application_loop(monkeypatch) -> None:
+    event_bus = EventBus()
+    engine, _, _, incident = make_engine()
+    delivered = asyncio.Event()
+
+    async def fake_dispatch(event_type: str, payload: dict[str, object]) -> None:
+        assert event_type == "resolved"
+        assert payload["incident_id"] == incident.id
+        delivered.set()
+
+    monkeypatch.setattr(engine, "dispatch", fake_dispatch)
+    engine._event_bus = event_bus
+    engine._loop = asyncio.get_running_loop()
+    engine.subscribe()
+
+    await asyncio.to_thread(
+        event_bus.publish, "incident_resolved", {"incident_id": incident.id}
+    )
+    await asyncio.wait_for(delivered.wait(), timeout=1)
+    assert event_bus.metrics().handler_failures == 0

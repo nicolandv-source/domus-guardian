@@ -175,3 +175,36 @@ def test_tts_and_stt_service_entities_do_not_create_availability_incidents() -> 
 
     assert incidents == []
     assert service.diagnostics() == []
+
+
+def test_reconciliation_keeps_real_offline_and_resolves_invalid_history() -> None:
+    service, factory = make_service()
+    with factory.begin() as session:
+        available = Device(
+            entity_id="fan.helper", domain="fan", is_available=True, name="Helper"
+        )
+        unavailable = Device(
+            entity_id="binary_sensor.real", domain="binary_sensor", is_available=False,
+            name="Sensore reale",
+        )
+        session.add_all([available, unavailable])
+        session.flush()
+        session.add_all(
+            [
+                Incident(
+                    device_id=available.id, entity_id="fan.helper", kind="availability",
+                    severity="warning", status="open", title="Helper non disponibile",
+                ),
+                Incident(
+                    device_id=unavailable.id, entity_id="physical-offline", kind="availability",
+                    severity="critical", status="open", title="Sensore non disponibile",
+                ),
+            ]
+        )
+
+    resolved = service.reconcile_open_incidents(BASE_TIME)
+
+    assert [incident.entity_id for incident in resolved] == ["fan.helper"]
+    with factory() as session:
+        incidents = {item.entity_id: item.status for item in session.scalars(select(Incident))}
+    assert incidents == {"fan.helper": "resolved", "physical-offline": "open"}

@@ -9,7 +9,7 @@ fi
 export HA_TOKEN="${SUPERVISOR_TOKEN}"
 # The Supervisor can retain an older manifest value while a local App is
 # rebuilt. Keep the runtime status tied to the bundled release instead.
-export APP_VERSION="1.0.2"
+export APP_VERSION="1.0.3"
 
 OPTIONS_EXPORTS="$(python3 - <<'PY'
 import json

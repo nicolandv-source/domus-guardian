@@ -39,12 +39,14 @@ class NotificationEngine:
         repository: NotificationRepository,
         adapter: HomeAssistantNotifyAdapter,
         policy: NotificationPolicy,
+        loop: asyncio.AbstractEventLoop | None = None,
     ) -> None:
         self._event_bus = event_bus
         self._session_factory = session_factory
         self._repository = repository
         self._adapter = adapter
         self._policy = policy
+        self._loop = loop
 
     def subscribe(self) -> None:
         self._event_bus.subscribe("incident_opened", self._on_incident_opened)
@@ -61,10 +63,13 @@ class NotificationEngine:
         self._schedule("resolved", payload)
 
     def _schedule(self, event_type: str, payload: dict[str, object]) -> None:
-        asyncio.get_running_loop().create_task(
-            self.dispatch(event_type, payload),
-            name=f"notification-{event_type}-{payload.get('incident_id')}",
-        )
+        coroutine = self.dispatch(event_type, payload)
+        if self._loop is not None and not self._loop.is_closed():
+            asyncio.run_coroutine_threadsafe(coroutine, self._loop)
+            return
+        # This fallback is for small synchronous embeddings that do not supply
+        # the application loop.  FastAPI supplies one at lifespan startup.
+        asyncio.run(coroutine)
 
     async def dispatch(self, event_type: str, payload: dict[str, object]) -> None:
         incident_id = int(payload["incident_id"])
