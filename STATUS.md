@@ -1,6 +1,6 @@
 # DOMUS Guardian — Stato progetto
 
-## Release locale: 0.7.0
+## Release locale: 1.0.4 (in preparazione)
 
 DOMUS Guardian è una App locale per Home Assistant OS che monitora la salute
 della casa e del servizio stesso. I dati rimangono in rete locale: PostgreSQL
@@ -24,15 +24,14 @@ Assistant è fornito dal Supervisor e non viene salvato nel repository.
   memoria e task attivi; può resettare il pool DB o richiedere una
   riconnessione del WebSocket in modo sicuro.
 
-## Verifica operativa più recente
+## Stato di validazione corrente
 
-- Database PostgreSQL raggiungibile.
-- WebSocket connesso e in ricezione eventi.
-- Endpoint health operativo con score pesato `99` e stato `healthy`.
-- Endpoint watchdog operativo con stato `healthy`.
-- Test automatici: `24 passed`.
-- Watchdog del Supervisor mantenuto disattivato fino a ulteriore periodo di
-  osservazione.
+- Implementazione 1.0.4 presente: retry PostgreSQL cooperativo, reset pool
+  non fatale e riconciliazione TTS/STT/DLNA.
+- Lint e 14 test mirati watchdog/riconciliazione sono riportati come superati.
+- Suite completa e stato live DB/WebSocket/health non verificati in questa
+  attività; `.venv` locale è Python 3.9.6, il container usa Python 3.13.
+- Nessun deploy o riavvio è stato eseguito per 1.0.4.
 
 ## Endpoint principali
 
@@ -47,9 +46,7 @@ Assistant è fornito dal Supervisor e non viene salvato nel repository.
 
 ## Prossimi passi consigliati
 
-1. Osservare il watchdog per alcuni giorni con il watchdog del Supervisor
-   ancora disattivato.
-2. Verificare una notifica di apertura e di risoluzione di un incidente senza
-   alterare dispositivi fisici critici.
-3. Quando la stabilità è confermata, valutare l'attivazione del watchdog del
-   Supervisor come livello di recupero esterno.
+1. Eseguire suite completa con Python compatibile con il container.
+2. Committare dopo review; verificare remote e chiedere conferma prima del push.
+3. Dopo deploy controllato, verificare watchdog, DB, WebSocket, EventBus,
+   incidenti e notifiche; poi valutare il watchdog Supervisor esterno.

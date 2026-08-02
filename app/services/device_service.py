@@ -97,16 +97,18 @@ class DeviceService:
                         if grouped is not None
                         else self._incident_device_available(incident)
                     )
-                    # Historical availability incidents for UI helpers are
-                    # invalid: helpers without a registry device never enter
-                    # physical-device monitoring.
+                    # Historical availability incidents for UI helpers and
+                    # excluded service integrations are invalid: neither can
+                    # enter physical-device monitoring now.  Resolve them but
+                    # never delete them, so the incident audit trail remains.
                     is_helper = (
                         grouped is None
                         and incident.device is not None
                         and incident.entity_id == incident.device.entity_id
                         and not self._grouping.is_physical_entity(incident.entity_id)
                     )
-                    if available or is_helper:
+                    is_excluded_history = self._is_excluded_incident(incident)
+                    if available or is_helper or is_excluded_history:
                         incident.status = "resolved"
                         incident.resolved_at = now
                         resolved.append(incident)
@@ -296,9 +298,26 @@ class DeviceService:
 
     @staticmethod
     def _monitors_availability(dto: StateChangedDTO) -> bool:
-        # TTS/STT are service entities. They are commonly unavailable while idle
+        # TTS/STT and DLNA service entities are commonly unavailable while idle
         # and do not represent a physical device health condition.
-        return dto.domain not in {"tts", "stt"}
+        if dto.domain in {"tts", "stt"}:
+            return False
+        return not DeviceService._is_dlna(dto.entity_id, dto.friendly_name)
+
+    @staticmethod
+    def _is_excluded_incident(incident: Incident) -> bool:
+        device = incident.device
+        domain = incident.entity_id.partition(".")[0]
+        return domain in {"tts", "stt"} or DeviceService._is_dlna(
+            incident.entity_id,
+            device.name if device is not None else None,
+        )
+
+    @staticmethod
+    def _is_dlna(entity_id: str, name: str | None) -> bool:
+        return entity_id.startswith("media_player.dlna") or "dlna" in (
+            name or ""
+        ).lower()
 
     def _incident_device_available(self, incident: Incident) -> bool:
         return incident.device is not None and incident.device.is_available

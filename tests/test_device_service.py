@@ -177,6 +177,20 @@ def test_tts_and_stt_service_entities_do_not_create_availability_incidents() -> 
     assert service.diagnostics() == []
 
 
+def test_dlna_service_entity_does_not_create_availability_incidents() -> None:
+    service, factory = make_service()
+    service.handle_state_changed(
+        event("media_player.dlna_living_room", "unavailable"), BASE_TIME
+    )
+    service.flush_debounce(BASE_TIME + timedelta(seconds=60))
+
+    with factory() as session:
+        incidents = session.scalars(select(Incident)).all()
+
+    assert incidents == []
+    assert service.diagnostics() == []
+
+
 def test_reconciliation_keeps_real_offline_and_resolves_invalid_history() -> None:
     service, factory = make_service()
     with factory.begin() as session:
@@ -208,3 +222,54 @@ def test_reconciliation_keeps_real_offline_and_resolves_invalid_history() -> Non
     with factory() as session:
         incidents = {item.entity_id: item.status for item in session.scalars(select(Incident))}
     assert incidents == {"fan.helper": "resolved", "physical-offline": "open"}
+
+
+def test_reconciliation_resolves_historical_tts_stt_and_dlna_incidents() -> None:
+    service, factory = make_service()
+    service.register_entity_mapping("media_player.dlna_living_room", "dlna-device")
+    with factory.begin() as session:
+        tts = Device(
+            entity_id="tts.google_translate",
+            domain="tts",
+            is_available=False,
+            name="Google Translate",
+        )
+        stt = Device(
+            entity_id="stt.whisper",
+            domain="stt",
+            is_available=False,
+            name="Whisper",
+        )
+        dlna = Device(
+            entity_id="media_player.dlna_living_room",
+            domain="media_player",
+            is_available=False,
+            name="DLNA soggiorno",
+        )
+        session.add_all([tts, stt, dlna])
+        session.flush()
+        session.add_all(
+            [
+                Incident(
+                    device_id=device.id,
+                    entity_id=device.entity_id,
+                    kind="availability",
+                    severity="warning",
+                    status="open",
+                    title=f"{device.name} non disponibile",
+                )
+                for device in (tts, stt, dlna)
+            ]
+        )
+
+    resolved = service.reconcile_open_incidents(BASE_TIME)
+
+    assert {incident.entity_id for incident in resolved} == {
+        "tts.google_translate",
+        "stt.whisper",
+        "media_player.dlna_living_room",
+    }
+    with factory() as session:
+        incidents = session.scalars(select(Incident)).all()
+    assert all(incident.status == "resolved" for incident in incidents)
+    assert all(incident.resolved_at is not None for incident in incidents)
