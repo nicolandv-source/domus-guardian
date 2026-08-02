@@ -109,7 +109,21 @@ class HomeAssistantWebSocketClient:
                         "Registro entità HA non disponibile; uso fallback entity_id"
                     )
 
-                await websocket.send(json.dumps({"id": 2, "type": "get_states"}))
+                await websocket.send(
+                    json.dumps({"id": 2, "type": "config/device_registry/list"})
+                )
+                device_registry_response = json.loads(await websocket.recv())
+                if device_registry_response.get("type") == "result" and device_registry_response.get(
+                    "success"
+                ):
+                    self._event_bus.publish(
+                        "device_registry_loaded",
+                        {"entries": device_registry_response.get("result") or []},
+                    )
+                else:
+                    logger.warning("Registro dispositivi HA non disponibile")
+
+                await websocket.send(json.dumps({"id": 3, "type": "get_states"}))
                 states_response = json.loads(await websocket.recv())
                 if states_response.get("type") == "result" and states_response.get(
                     "success"
@@ -144,7 +158,7 @@ class HomeAssistantWebSocketClient:
                 await websocket.send(
                     json.dumps(
                         {
-                            "id": 3,
+                            "id": 4,
                             "type": "subscribe_events",
                             "event_type": "state_changed",
                         }

@@ -32,6 +32,19 @@ class FakeWebSocket:
                     "success": True,
                     "result": [
                         {
+                            "id": "physical-test",
+                            "connections": [["mac", "04-B9-E3-12-5B-E6"]],
+                        }
+                    ],
+                }
+            ),
+            json.dumps(
+                {
+                    "id": 3,
+                    "type": "result",
+                    "success": True,
+                    "result": [
+                        {
                             "entity_id": "sensor.domus_test",
                             "state": "on",
                             "attributes": {},
@@ -39,7 +52,7 @@ class FakeWebSocket:
                     ],
                 }
             ),
-            json.dumps({"id": 3, "type": "result", "success": True}),
+            json.dumps({"id": 4, "type": "result", "success": True}),
         ]
         self.events = [
             json.dumps(
@@ -104,8 +117,9 @@ async def test_authenticates_subscribes_and_publishes_event() -> None:
     assert websocket.sent == [
         {"type": "auth", "access_token": "secret"},
         {"id": 1, "type": "config/entity_registry/list"},
-        {"id": 2, "type": "get_states"},
-        {"id": 3, "type": "subscribe_events", "event_type": "state_changed"},
+        {"id": 2, "type": "config/device_registry/list"},
+        {"id": 3, "type": "get_states"},
+        {"id": 4, "type": "subscribe_events", "event_type": "state_changed"},
     ]
     assert connect_kwargs["additional_headers"] == {
         "Authorization": "Bearer secret"

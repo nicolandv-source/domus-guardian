@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from datetime import datetime, timezone
+from typing import Any
 
 from sqlalchemy.orm import Session
 from sqlalchemy import select
@@ -49,6 +50,9 @@ class DeviceService:
         platform: str | None = None,
     ) -> None:
         self._grouping.register_entity_mapping(entity_id, device_id, platform)
+
+    def register_device_registry_entry(self, entry: dict[str, Any]) -> None:
+        self._grouping.register_device_registry_entry(entry)
 
     def is_physical_entity(self, entity_id: str) -> bool:
         return self._grouping.is_physical_entity(entity_id)
@@ -123,23 +127,7 @@ class DeviceService:
                         and not self._grouping.is_physical_entity(incident.entity_id)
                     )
                     is_excluded_history = self._is_excluded_incident(incident)
-                    is_dlna_duplicate = (
-                        source_entity_id is not None
-                        and self._is_dlna_entity(source_entity_id)
-                        and self._grouping.has_operational_non_dlna_media_player_sibling(
-                            source_entity_id
-                        )
-                    )
-                    source_is_dlna = (
-                        source_entity_id is not None
-                        and self._is_dlna_entity(source_entity_id)
-                    )
-                    if (
-                        (available and not source_is_dlna)
-                        or is_helper
-                        or is_excluded_history
-                        or is_dlna_duplicate
-                    ):
+                    if available or is_helper or is_excluded_history:
                         incident.status = "resolved"
                         incident.resolved_at = now
                         resolved.append(incident)
@@ -339,9 +327,6 @@ class DeviceService:
         return any(
             entity_id.partition(".")[0] in {"tts", "stt"} for entity_id in identities
         )
-
-    def _is_dlna_entity(self, entity_id: str) -> bool:
-        return self._grouping.platform_for_entity(entity_id) == "dlna_dmr"
 
     @staticmethod
     def _incident_source_entity_id(incident: Incident) -> str | None:

@@ -47,6 +47,51 @@ def event(
     )
 
 
+def register_media_player(
+    service: DeviceService,
+    *,
+    entity_id: str,
+    device_id: str,
+    platform: str,
+    mac: str | None = None,
+    area_id: str | None = None,
+    model: str | None = None,
+    name: str | None = None,
+) -> None:
+    service.register_entity_mapping(entity_id, device_id, platform)
+    entry: dict[str, object] = {
+        "id": device_id,
+        "connections": [["mac", mac]] if mac else [],
+    }
+    if area_id:
+        entry["area_id"] = area_id
+    if model:
+        entry["model"] = model
+    if name:
+        entry["name"] = name
+    service.register_device_registry_entry(entry)
+
+
+def add_open_availability_incident(
+    factory: sessionmaker,
+    source_entity_id: str,
+    incident_key: str,
+) -> Incident:
+    with factory.begin() as session:
+        device = session.scalar(select(Device).where(Device.entity_id == source_entity_id))
+        assert device is not None
+        incident = Incident(
+            device_id=device.id,
+            entity_id=incident_key,
+            kind="availability",
+            severity="warning",
+            status="open",
+            title="Rappresentazione non disponibile",
+        )
+        session.add(incident)
+    return incident
+
+
 def test_grouped_entities_open_one_incident_after_debounce() -> None:
     service, factory = make_service()
 
@@ -376,3 +421,255 @@ def test_dlna_reconciliation_is_idempotent_across_two_starts() -> None:
 
     assert len(first) == 1
     assert second == []
+
+
+def test_shared_mac_with_on_sibling_resolves_and_does_not_reopen() -> None:
+    service, factory = make_service()
+    register_media_player(
+        service,
+        entity_id="media_player.cucina_dlna",
+        device_id="kitchen-dlna",
+        platform="dlna_dmr",
+        mac="04-B9-E3-12-5B-E6",
+    )
+    register_media_player(
+        service,
+        entity_id="media_player.cucina_samsung",
+        device_id="kitchen-samsung",
+        platform="samsungtv",
+        mac="04:b9:e3:12:5b:e6",
+    )
+    service.handle_state_changed(
+        event("media_player.cucina_dlna", "unavailable", "kitchen-dlna"), BASE_TIME
+    )
+    service.handle_state_changed(
+        event("media_player.cucina_samsung", "on", "kitchen-samsung"), BASE_TIME
+    )
+    incident = add_open_availability_incident(
+        factory, "media_player.cucina_dlna", "kitchen-dlna"
+    )
+
+    resolved = service.reconcile_open_incidents(BASE_TIME)
+    service.handle_state_changed(
+        event(
+            "media_player.cucina_dlna",
+            "unavailable",
+            "kitchen-dlna",
+        ),
+        BASE_TIME + timedelta(minutes=1),
+    )
+    service.flush_debounce(BASE_TIME + timedelta(minutes=2))
+
+    assert [item.id for item in resolved] == [incident.id]
+    with factory() as session:
+        incidents = session.scalars(select(Incident)).all()
+    assert len(incidents) == 1
+    assert incidents[0].status == "resolved"
+
+
+def test_shared_mac_with_off_sibling_is_operational() -> None:
+    service, factory = make_service()
+    register_media_player(
+        service,
+        entity_id="media_player.sala_dlna",
+        device_id="living-dlna",
+        platform="dlna_dmr",
+        mac="6c:70:cb:a8:14:b0",
+    )
+    register_media_player(
+        service,
+        entity_id="media_player.sala_samsung",
+        device_id="living-samsung",
+        platform="samsungtv",
+        mac="6c70cba814b0",
+    )
+    service.handle_state_changed(
+        event("media_player.sala_dlna", "unavailable", "living-dlna"), BASE_TIME
+    )
+    service.handle_state_changed(
+        event("media_player.sala_samsung", "off", "living-samsung"), BASE_TIME
+    )
+    add_open_availability_incident(factory, "media_player.sala_dlna", "living-dlna")
+
+    assert len(service.reconcile_open_incidents(BASE_TIME)) == 1
+
+
+def test_cast_without_mac_joins_specific_area_and_model_cluster() -> None:
+    service, factory = make_service()
+    register_media_player(
+        service,
+        entity_id="media_player.samsung_salotto",
+        device_id="living-samsung",
+        platform="samsungtv",
+        mac="6c:70:cb:a8:14:b0",
+        area_id="salotto",
+        model="QE75Q60DAUXXH",
+        name='75" QLED',
+    )
+    register_media_player(
+        service,
+        entity_id="media_player.cast_q60d",
+        device_id="living-cast",
+        platform="cast",
+        area_id="salotto",
+        model="Q60D",
+        name='75" QLED',
+    )
+    service.handle_state_changed(
+        event("media_player.cast_q60d", "unavailable", "living-cast"), BASE_TIME
+    )
+    service.handle_state_changed(
+        event("media_player.samsung_salotto", "off", "living-samsung"), BASE_TIME
+    )
+    add_open_availability_incident(factory, "media_player.cast_q60d", "living-cast")
+
+    resolved = service.reconcile_open_incidents(BASE_TIME)
+
+    assert len(resolved) == 1
+    snapshot = next(
+        item
+        for item in service.diagnostics()
+        if "media_player.cast_q60d" in item["entity_ids"]
+    )
+    assert snapshot["entity_ids"] == (
+        "media_player.cast_q60d",
+        "media_player.samsung_salotto",
+    )
+    assert snapshot["last_state"] == "available"
+
+
+def test_generic_cast_in_same_area_is_not_correlated() -> None:
+    service, factory = make_service()
+    register_media_player(
+        service,
+        entity_id="media_player.samsung_cucina",
+        device_id="kitchen-samsung",
+        platform="samsungtv",
+        mac="04:b9:e3:12:5b:e6",
+        area_id="cucina",
+        model="UE55AU7170",
+        name="TV Cucina",
+    )
+    register_media_player(
+        service,
+        entity_id="media_player.nest_hub_cucina",
+        device_id="kitchen-nest-hub",
+        platform="cast",
+        area_id="cucina",
+        model="Nest Hub",
+        name="Cucina",
+    )
+    service.handle_state_changed(
+        event("media_player.samsung_cucina", "on", "kitchen-samsung"), BASE_TIME
+    )
+    service.handle_state_changed(
+        event("media_player.nest_hub_cucina", "unavailable", "kitchen-nest-hub"),
+        BASE_TIME,
+    )
+    add_open_availability_incident(
+        factory, "media_player.nest_hub_cucina", "kitchen-nest-hub"
+    )
+
+    assert service.reconcile_open_incidents(BASE_TIME) == []
+
+
+def test_same_name_and_area_with_different_models_is_not_correlated() -> None:
+    service, factory = make_service()
+    register_media_player(
+        service,
+        entity_id="media_player.q60d_samsung",
+        device_id="living-samsung",
+        platform="samsungtv",
+        mac="6c:70:cb:a8:14:b0",
+        area_id="salotto",
+        model="QE75Q60DAUXXH",
+        name='75" QLED',
+    )
+    register_media_player(
+        service,
+        entity_id="media_player.q80d_cast",
+        device_id="living-cast",
+        platform="cast",
+        area_id="salotto",
+        model="Q80D",
+        name='75" QLED',
+    )
+    service.handle_state_changed(
+        event("media_player.q60d_samsung", "on", "living-samsung"), BASE_TIME
+    )
+    service.handle_state_changed(
+        event("media_player.q80d_cast", "unavailable", "living-cast"), BASE_TIME
+    )
+    add_open_availability_incident(factory, "media_player.q80d_cast", "living-cast")
+
+    assert service.reconcile_open_incidents(BASE_TIME) == []
+
+
+def test_all_entities_in_shared_mac_cluster_unavailable_keep_incident_open() -> None:
+    service, factory = make_service()
+    register_media_player(
+        service,
+        entity_id="media_player.camera_dlna",
+        device_id="bedroom-dlna",
+        platform="dlna_dmr",
+        mac="aa:bb:cc:dd:ee:ff",
+    )
+    register_media_player(
+        service,
+        entity_id="media_player.camera_samsung",
+        device_id="bedroom-samsung",
+        platform="samsungtv",
+        mac="AA-BB-CC-DD-EE-FF",
+    )
+    service.handle_state_changed(
+        event("media_player.camera_dlna", "unavailable", "bedroom-dlna"), BASE_TIME
+    )
+    service.handle_state_changed(
+        event("media_player.camera_samsung", "unknown", "bedroom-samsung"), BASE_TIME
+    )
+    add_open_availability_incident(factory, "media_player.camera_dlna", "bedroom-dlna")
+
+    assert service.reconcile_open_incidents(BASE_TIME) == []
+    snapshot = next(
+        item
+        for item in service.diagnostics()
+        if "media_player.camera_dlna" in item["entity_ids"]
+    )
+    assert snapshot["pending_state"] == "unavailable"
+
+
+def test_correlated_media_player_reconciliation_is_idempotent_and_keeps_history() -> None:
+    service, factory = make_service()
+    register_media_player(
+        service,
+        entity_id="media_player.sala_dlna",
+        device_id="living-dlna",
+        platform="dlna_dmr",
+        mac="6c:70:cb:a8:14:b0",
+    )
+    register_media_player(
+        service,
+        entity_id="media_player.sala_samsung",
+        device_id="living-samsung",
+        platform="samsungtv",
+        mac="6c:70:cb:a8:14:b0",
+    )
+    service.handle_state_changed(
+        event("media_player.sala_dlna", "unavailable", "living-dlna"), BASE_TIME
+    )
+    service.handle_state_changed(
+        event("media_player.sala_samsung", "off", "living-samsung"), BASE_TIME
+    )
+    incident = add_open_availability_incident(factory, "media_player.sala_dlna", "living-dlna")
+
+    first = service.reconcile_open_incidents(BASE_TIME)
+    second = service.reconcile_open_incidents(BASE_TIME + timedelta(minutes=1))
+
+    assert [item.id for item in first] == [incident.id]
+    assert second == []
+    with factory() as session:
+        incidents = session.scalars(select(Incident)).all()
+    assert len(incidents) == 1
+    assert incidents[0].id == incident.id
+    assert incidents[0].status == "resolved"
+    assert incidents[0].resolved_at is not None
