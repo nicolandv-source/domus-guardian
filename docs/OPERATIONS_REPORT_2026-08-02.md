@@ -5,16 +5,14 @@
 ## Stato verificato
 
 - Worktree iniziale 1.0.4: 9 file, `+261/-29`; `git diff --check` pulito.
-- Versione 1.0.4 presente in manifest e runtime; nuovi test per watchdog e riconciliazione.
-- Virtualenv locale Python 3.9.6 non idoneo alla suite completa; Dockerfile Python 3.13 slim.
+- Regressione corretta: `run.sh` ora esporta `APP_VERSION="1.0.4"`, coerente con manifest e runtime.
+- Con Python 3.12.13: `ruff check app tests alembic` verde e suite completa `pytest` con 47 test passati; un avviso di deprecazione non bloccante.
+- Build container non eseguita: Docker non è disponibile nell'ambiente di validazione.
 
 ## Non eseguito intenzionalmente
 
-Deploy/riavvii Home Assistant/PostgreSQL, verifiche live, pubblicazione Notion e push remoto.
+Deploy/riavvii Home Assistant/PostgreSQL, verifiche live e pubblicazione Notion.
 
 ## Pendenti
 
-1. Suite completa su Python compatibile.
-2. Review diff e commit descrittivo.
-3. Verifica autenticazione GitHub e conferma utente prima del push.
-4. Deploy controllato e verifica watchdog, DB, WebSocket, EventBus, incidenti e notifiche.
+1. Deploy controllato e verifica watchdog, DB, WebSocket, EventBus, incidenti e notifiche.

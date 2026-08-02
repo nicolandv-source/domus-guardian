@@ -4,14 +4,15 @@
 
 ## Sintesi
 
-DOMUS Guardian è una Home Assistant App locale FastAPI per monitorare dispositivi fisici, persistere incidenti e notifiche su PostgreSQL e calcolare una health ponderata. La 1.0.4 è implementata nel worktree ma richiede ancora suite completa in ambiente Python compatibile e deploy controllato.
+DOMUS Guardian è una Home Assistant App locale FastAPI per monitorare dispositivi fisici, persistere incidenti e notifiche su PostgreSQL e calcolare una health ponderata. La 1.0.4 è implementata e validata in ambiente Python compatibile; resta il deploy controllato.
 
 | Area | Stato |
 |---|---|
 | Implementazione 1.0.4 | Presente: 9 file, `+261/-29` |
 | Lint | Riportato verde (`ruff check app tests alembic`) |
 | Test mirati | Riportati 14 passati (watchdog + riconciliazione) |
-| Suite completa | Pendente: `.venv` locale Python 3.9.6 incompatibile |
+| Suite completa | 47 test passati su Python 3.12.13; un avviso di deprecazione non bloccante |
+| Build container | Non eseguita: Docker non disponibile nell'ambiente di validazione |
 | Deploy e stato live | Non eseguiti/verificati |
 
 ## Obiettivi
@@ -87,7 +88,7 @@ In 1.0.4 il DB riceve fino a 3 retry configurabili con backoff esponenziale coop
 ### Da verificare
 
 - Il conteggio e l'elenco degli incidenti live: verificare dopo deploy con `GET /api/v1/incidents?status=open`.
-- Suite completa su Python compatibile: è il gate di rilascio residuo.
+- Verifiche live post-deploy: sono il gate di rilascio residuo.
 
 ## Configurazione e dipendenze
 
@@ -103,9 +104,9 @@ I limiti sono applicati dal codice: intervallo 10–3600 s, stale 1–1440 min, 
 
 ## Piano deploy, rollback e roadmap
 
-1. Creare un ambiente pulito con Python compatibile con il container e installare `requirements-dev.txt`.
-2. Eseguire `ruff check app tests alembic`, `pytest -q` e controllo diff.
-3. Committare; verificare remote/autenticazione e chiedere conferma prima del push.
+1. Suite completa superata su Python 3.12.13: 47 test passati e `ruff check app tests alembic` verde; un avviso di deprecazione non bloccante.
+2. La regressione in `run.sh` che esportava `APP_VERSION="1.0.3"` è corretta: manifest, runtime e API ora riportano 1.0.4.
+3. Build container non eseguita perché Docker non è disponibile nell'ambiente di validazione.
 4. Deploy controllato dell'App. Verificare watchdog healthy, DB, WebSocket, EventBus e mancata riapertura TTS/STT/DLNA.
 5. In caso di regressione, interrompere rollout e ripristinare l'ultima versione App funzionante senza cancellare PostgreSQL. La 1.0.4 non introduce migrazioni.
 

@@ -28,9 +28,12 @@ Assistant è fornito dal Supervisor e non viene salvato nel repository.
 
 - Implementazione 1.0.4 presente: retry PostgreSQL cooperativo, reset pool
   non fatale e riconciliazione TTS/STT/DLNA.
-- Lint e 14 test mirati watchdog/riconciliazione sono riportati come superati.
-- Suite completa e stato live DB/WebSocket/health non verificati in questa
-  attività; `.venv` locale è Python 3.9.6, il container usa Python 3.13.
+- Regressione versione corretta: `run.sh` esporta ora `APP_VERSION="1.0.4"`,
+  allineato a manifest, runtime e API.
+- `ruff check app tests alembic` e la suite completa sono superati con Python
+  3.12.13: 47 test passati e un avviso di deprecazione non bloccante.
+- La build container non è stata eseguita perché Docker non è disponibile
+  nell'ambiente di validazione.
 - Nessun deploy o riavvio è stato eseguito per 1.0.4.
 
 ## Endpoint principali
@@ -46,7 +49,5 @@ Assistant è fornito dal Supervisor e non viene salvato nel repository.
 
 ## Prossimi passi consigliati
 
-1. Eseguire suite completa con Python compatibile con il container.
-2. Committare dopo review; verificare remote e chiedere conferma prima del push.
-3. Dopo deploy controllato, verificare watchdog, DB, WebSocket, EventBus,
+1. Dopo deploy controllato, verificare watchdog, DB, WebSocket, EventBus,
    incidenti e notifiche; poi valutare il watchdog Supervisor esterno.
