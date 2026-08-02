@@ -42,8 +42,13 @@ class DeviceService:
         self._profile_for = profile_for
         self._maintenance = maintenance_repository or MaintenanceRepository()
 
-    def register_entity_mapping(self, entity_id: str, device_id: str | None) -> None:
-        self._grouping.register_entity_mapping(entity_id, device_id)
+    def register_entity_mapping(
+        self,
+        entity_id: str,
+        device_id: str | None,
+        platform: str | None = None,
+    ) -> None:
+        self._grouping.register_entity_mapping(entity_id, device_id, platform)
 
     def is_physical_entity(self, entity_id: str) -> bool:
         return self._grouping.is_physical_entity(entity_id)
@@ -58,9 +63,14 @@ class DeviceService:
         with self._session_factory() as session:
             with session.begin():
                 self._devices.upsert(session, dto)
-                if not self._monitors_availability(dto):
+                if dto.domain in {"tts", "stt"}:
                     return None
-                grouped = self._grouping.update(dto)
+                # Keep each physical registry entity's state for sibling-aware
+                # reconciliation during the initial Home Assistant snapshot.
+                self._grouping.update(dto)
+                grouped = self._grouping.snapshot_for_entity(dto.entity_id)
+                if grouped is None:
+                    return None
                 change = self._debouncer.process_state_change(
                     grouped.device_id,
                     grouped.is_available,
@@ -87,7 +97,12 @@ class DeviceService:
         with self._session_factory() as session:
             with session.begin():
                 for incident in self._incidents.list_open_availability(session):
-                    grouped = self._grouping.snapshot(incident.entity_id)
+                    source_entity_id = self._incident_source_entity_id(incident)
+                    grouped = (
+                        self._grouping.snapshot_for_entity(source_entity_id)
+                        if source_entity_id
+                        else self._grouping.snapshot(incident.entity_id)
+                    )
                     group_id = grouped.device_id if grouped is not None else incident.entity_id
                     if self._maintenance.get_active(session, group_id, now):
                         continue
@@ -108,7 +123,23 @@ class DeviceService:
                         and not self._grouping.is_physical_entity(incident.entity_id)
                     )
                     is_excluded_history = self._is_excluded_incident(incident)
-                    if available or is_helper or is_excluded_history:
+                    is_dlna_duplicate = (
+                        source_entity_id is not None
+                        and self._is_dlna_entity(source_entity_id)
+                        and self._grouping.has_operational_non_dlna_media_player_sibling(
+                            source_entity_id
+                        )
+                    )
+                    source_is_dlna = (
+                        source_entity_id is not None
+                        and self._is_dlna_entity(source_entity_id)
+                    )
+                    if (
+                        (available and not source_is_dlna)
+                        or is_helper
+                        or is_excluded_history
+                        or is_dlna_duplicate
+                    ):
                         incident.status = "resolved"
                         incident.resolved_at = now
                         resolved.append(incident)
@@ -297,33 +328,28 @@ class DeviceService:
         return "available" if state else "unavailable"
 
     @staticmethod
-    def _monitors_availability(dto: StateChangedDTO) -> bool:
-        # TTS/STT and DLNA service entities are commonly unavailable while idle
-        # and do not represent a physical device health condition.
-        if dto.domain in {"tts", "stt"}:
-            return False
-        return not DeviceService._is_dlna(dto.entity_id, dto.friendly_name)
-
-    @staticmethod
     def _is_excluded_incident(incident: Incident) -> bool:
         device = incident.device
-        identities = [(incident.entity_id, None)]
+        identities = [incident.entity_id]
         # Grouped availability incidents use the Home Assistant device_id as
         # their incident key.  Historical rows can therefore not be classified
         # from the key alone: use their linked entity as a second identity.
         if device is not None:
-            identities.append((device.entity_id, device.name))
+            identities.append(device.entity_id)
         return any(
-            entity_id.partition(".")[0] in {"tts", "stt"}
-            or DeviceService._is_dlna(entity_id, name)
-            for entity_id, name in identities
+            entity_id.partition(".")[0] in {"tts", "stt"} for entity_id in identities
         )
 
+    def _is_dlna_entity(self, entity_id: str) -> bool:
+        return self._grouping.platform_for_entity(entity_id) == "dlna_dmr"
+
     @staticmethod
-    def _is_dlna(entity_id: str, name: str | None) -> bool:
-        return entity_id.startswith("media_player.dlna") or "dlna" in (
-            name or ""
-        ).lower()
+    def _incident_source_entity_id(incident: Incident) -> str | None:
+        if incident.device is not None:
+            return incident.device.entity_id
+        if incident.entity_id.startswith("media_player."):
+            return incident.entity_id
+        return None
 
     def _incident_device_available(self, incident: Incident) -> bool:
         return incident.device is not None and incident.device.is_available

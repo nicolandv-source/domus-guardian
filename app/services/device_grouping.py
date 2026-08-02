@@ -25,15 +25,23 @@ class DeviceGrouping:
 
     def __init__(self) -> None:
         self._entity_to_device: dict[str, str] = {}
+        self._entity_platforms: dict[str, str | None] = {}
         self._groups: dict[str, _DeviceGroup] = {}
         self._lock = RLock()
 
-    def register_entity_mapping(self, entity_id: str, device_id: str | None) -> None:
+    def register_entity_mapping(
+        self,
+        entity_id: str,
+        device_id: str | None,
+        platform: str | None = None,
+    ) -> None:
         if not entity_id or not device_id:
             return
         with self._lock:
             previous_group = self._entity_to_device.get(entity_id)
             self._entity_to_device[entity_id] = device_id
+            if platform is not None:
+                self._entity_platforms[entity_id] = platform
             if previous_group and previous_group != device_id:
                 self._move_entity(entity_id, previous_group, device_id)
 
@@ -50,6 +58,12 @@ class DeviceGrouping:
             group = self._groups.get(device_id)
             return self._snapshot(device_id, group) if group else None
 
+    def snapshot_for_entity(self, entity_id: str) -> GroupedDeviceState | None:
+        with self._lock:
+            device_id = self._entity_to_device.get(entity_id)
+            group = self._groups.get(device_id) if device_id else None
+            return self._snapshot(device_id, group) if group and device_id else None
+
     def all_snapshots(self) -> list[GroupedDeviceState]:
         with self._lock:
             return [
@@ -61,6 +75,25 @@ class DeviceGrouping:
         """Whether HA's entity registry associated this entity with a device."""
         with self._lock:
             return entity_id in self._entity_to_device
+
+    def platform_for_entity(self, entity_id: str) -> str | None:
+        with self._lock:
+            return self._entity_platforms.get(entity_id)
+
+    def has_operational_non_dlna_media_player_sibling(self, entity_id: str) -> bool:
+        """Return whether a registry sibling can represent this media device."""
+        with self._lock:
+            device_id = self._entity_to_device.get(entity_id)
+            group = self._groups.get(device_id) if device_id else None
+            if group is None:
+                return False
+            return any(
+                sibling_id != entity_id
+                and sibling_id.startswith("media_player.")
+                and self._entity_platforms.get(sibling_id) != "dlna_dmr"
+                and is_available
+                for sibling_id, is_available in group.entity_states.items()
+            )
 
     def _resolve_device_id(self, dto: StateChangedDTO) -> str:
         device_id = dto.device_id or self._entity_to_device.get(dto.entity_id)

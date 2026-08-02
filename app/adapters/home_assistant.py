@@ -44,6 +44,7 @@ class HomeAssistantAdapter:
             self._device_service.register_entity_mapping(
                 entry.get("entity_id", ""),
                 entry.get("device_id"),
+                entry.get("platform"),
             )
 
     def handle_state_snapshot_loaded(self, _: dict[str, Any]) -> None:

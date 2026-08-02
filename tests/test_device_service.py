@@ -177,47 +177,32 @@ def test_tts_and_stt_service_entities_do_not_create_availability_incidents() -> 
     assert service.diagnostics() == []
 
 
-def test_dlna_service_entity_does_not_create_availability_incidents() -> None:
+def test_unavailable_dlna_without_sibling_opens_availability_incident() -> None:
     service, factory = make_service()
-    with factory.begin() as session:
-        device = Device(
-            entity_id="media_player.sala",
-            domain="media_player",
-            is_available=False,
-            name="DLNA sala",
-        )
-        session.add(device)
-        session.flush()
-        session.add(
-            Incident(
-                device_id=device.id,
-                entity_id="dlna-device",
-                kind="availability",
-                severity="warning",
-                status="resolved",
-                title="DLNA sala non disponibile",
-                resolved_at=BASE_TIME,
-            )
-        )
+    service.register_entity_mapping(
+        "media_player.camera_da_letto", "bedroom-tv", "dlna_dmr"
+    )
     service.handle_state_changed(
         StateChangedDTO(
-            entity_id="media_player.sala",
+            entity_id="media_player.camera_da_letto",
             state="unavailable",
             domain="media_player",
-            friendly_name="DLNA sala",
-            device_id="dlna-device",
+            friendly_name="Google TV camera",
+            device_id="bedroom-tv",
             time_fired=BASE_TIME,
         ),
         BASE_TIME,
     )
-    service.flush_debounce(BASE_TIME + timedelta(seconds=60))
+    service.flush_debounce(BASE_TIME + timedelta(seconds=30))
 
     with factory() as session:
         incidents = session.scalars(select(Incident)).all()
 
     assert len(incidents) == 1
-    assert incidents[0].status == "resolved"
-    assert service.diagnostics() == []
+    assert incidents[0].status == "open"
+    assert service.diagnostics()[0]["entity_ids"] == (
+        "media_player.camera_da_letto",
+    )
 
 
 def test_reconciliation_keeps_real_offline_and_resolves_invalid_history() -> None:
@@ -253,7 +238,7 @@ def test_reconciliation_keeps_real_offline_and_resolves_invalid_history() -> Non
     assert incidents == {"fan.helper": "resolved", "physical-offline": "open"}
 
 
-def test_reconciliation_resolves_historical_excluded_incidents_keyed_by_device_id() -> None:
+def test_reconciliation_resolves_historical_tts_stt_incidents_keyed_by_device_id() -> None:
     service, factory = make_service()
     with factory.begin() as session:
         excluded = [
@@ -261,9 +246,6 @@ def test_reconciliation_resolves_historical_excluded_incidents_keyed_by_device_i
             Device(entity_id="tts.cloud", domain="tts", is_available=False),
             Device(entity_id="stt.whisper", domain="stt", is_available=False),
             Device(entity_id="stt.piper", domain="stt", is_available=False),
-            Device(entity_id="media_player.sala", domain="media_player", is_available=False, name="DLNA sala"),
-            Device(entity_id="media_player.cucina", domain="media_player", is_available=False, name="DLNA cucina"),
-            Device(entity_id="media_player.dlna_camera", domain="media_player", is_available=False),
         ]
         real = Device(
             entity_id="binary_sensor.real", domain="binary_sensor", is_available=False,
@@ -298,14 +280,14 @@ def test_reconciliation_resolves_historical_excluded_incidents_keyed_by_device_i
     resolved = service.reconcile_open_incidents(BASE_TIME)
 
     assert {incident.entity_id for incident in resolved} == {
-        f"historical-device-{index}" for index in range(1, 8)
+        f"historical-device-{index}" for index in range(1, 5)
     }
     with factory() as session:
         incidents = {incident.entity_id: incident for incident in session.scalars(select(Incident))}
     assert all(
         incidents[f"historical-device-{index}"].status == "resolved"
         and incidents[f"historical-device-{index}"].resolved_at is not None
-        for index in range(1, 8)
+        for index in range(1, 5)
     )
     assert incidents["historical-real-device"].status == "open"
     resolved_at = {
@@ -320,5 +302,77 @@ def test_reconciliation_resolves_historical_excluded_incidents_keyed_by_device_i
     assert all(
         incidents[f"historical-device-{index}"].resolved_at
         == resolved_at[f"historical-device-{index}"]
-        for index in range(1, 8)
+        for index in range(1, 5)
     )
+
+
+def test_reconciliation_resolves_dlna_duplicate_with_available_sibling() -> None:
+    service, factory = make_service()
+    service.register_entity_mapping("media_player.tv", "kitchen-tv", "dlna_dmr")
+    service.register_entity_mapping("media_player.tv_ue55au7170uxzt", "kitchen-tv", "samsungtv")
+    service.handle_state_changed(event("media_player.tv", "unavailable", "kitchen-tv"), BASE_TIME)
+    service.handle_state_changed(
+        event("media_player.tv_ue55au7170uxzt", "on", "kitchen-tv"), BASE_TIME
+    )
+    with factory.begin() as session:
+        dlna = session.scalar(select(Device).where(Device.entity_id == "media_player.tv"))
+        assert dlna is not None
+        session.add(Incident(device_id=dlna.id, entity_id="kitchen-tv", kind="availability", severity="warning", status="open", title="TV non disponibile"))
+
+    resolved = service.reconcile_open_incidents(BASE_TIME)
+
+    assert [incident.entity_id for incident in resolved] == ["kitchen-tv"]
+
+
+def test_reconciliation_resolves_dlna_duplicate_with_off_but_available_sibling() -> None:
+    service, factory = make_service()
+    service.register_entity_mapping("media_player.75_qled", "living-tv", "dlna_dmr")
+    service.register_entity_mapping("media_player.75_qled_qe75q60dauxxh_2", "living-tv", "samsungtv")
+    service.handle_state_changed(event("media_player.75_qled", "unavailable", "living-tv"), BASE_TIME)
+    service.handle_state_changed(
+        event("media_player.75_qled_qe75q60dauxxh_2", "off", "living-tv"), BASE_TIME
+    )
+    with factory.begin() as session:
+        dlna = session.scalar(select(Device).where(Device.entity_id == "media_player.75_qled"))
+        assert dlna is not None
+        session.add(Incident(device_id=dlna.id, entity_id="living-tv", kind="availability", severity="warning", status="open", title="TV non disponibile"))
+
+    resolved = service.reconcile_open_incidents(BASE_TIME)
+
+    assert [incident.entity_id for incident in resolved] == ["living-tv"]
+
+
+def test_reconciliation_keeps_dlna_when_non_dlna_sibling_is_unavailable() -> None:
+    service, factory = make_service()
+    service.register_entity_mapping("media_player.tv", "kitchen-tv", "dlna_dmr")
+    service.register_entity_mapping("media_player.tv_ue55au7170uxzt", "kitchen-tv", "samsungtv")
+    service.handle_state_changed(event("media_player.tv", "unavailable", "kitchen-tv"), BASE_TIME)
+    service.handle_state_changed(
+        event("media_player.tv_ue55au7170uxzt", "unavailable", "kitchen-tv"), BASE_TIME
+    )
+    with factory.begin() as session:
+        dlna = session.scalar(select(Device).where(Device.entity_id == "media_player.tv"))
+        assert dlna is not None
+        session.add(Incident(device_id=dlna.id, entity_id="kitchen-tv", kind="availability", severity="warning", status="open", title="TV non disponibile"))
+
+    assert service.reconcile_open_incidents(BASE_TIME) == []
+
+
+def test_dlna_reconciliation_is_idempotent_across_two_starts() -> None:
+    service, factory = make_service()
+    service.register_entity_mapping("media_player.tv", "kitchen-tv", "dlna_dmr")
+    service.register_entity_mapping("media_player.tv_ue55au7170uxzt", "kitchen-tv", "samsungtv")
+    service.handle_state_changed(event("media_player.tv", "unavailable", "kitchen-tv"), BASE_TIME)
+    service.handle_state_changed(
+        event("media_player.tv_ue55au7170uxzt", "off", "kitchen-tv"), BASE_TIME
+    )
+    with factory.begin() as session:
+        dlna = session.scalar(select(Device).where(Device.entity_id == "media_player.tv"))
+        assert dlna is not None
+        session.add(Incident(device_id=dlna.id, entity_id="kitchen-tv", kind="availability", severity="warning", status="open", title="TV non disponibile"))
+
+    first = service.reconcile_open_incidents(BASE_TIME)
+    second = service.reconcile_open_incidents(BASE_TIME + timedelta(minutes=1))
+
+    assert len(first) == 1
+    assert second == []
