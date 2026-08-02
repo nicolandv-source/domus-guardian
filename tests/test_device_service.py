@@ -179,15 +179,44 @@ def test_tts_and_stt_service_entities_do_not_create_availability_incidents() -> 
 
 def test_dlna_service_entity_does_not_create_availability_incidents() -> None:
     service, factory = make_service()
+    with factory.begin() as session:
+        device = Device(
+            entity_id="media_player.sala",
+            domain="media_player",
+            is_available=False,
+            name="DLNA sala",
+        )
+        session.add(device)
+        session.flush()
+        session.add(
+            Incident(
+                device_id=device.id,
+                entity_id="dlna-device",
+                kind="availability",
+                severity="warning",
+                status="resolved",
+                title="DLNA sala non disponibile",
+                resolved_at=BASE_TIME,
+            )
+        )
     service.handle_state_changed(
-        event("media_player.dlna_living_room", "unavailable"), BASE_TIME
+        StateChangedDTO(
+            entity_id="media_player.sala",
+            state="unavailable",
+            domain="media_player",
+            friendly_name="DLNA sala",
+            device_id="dlna-device",
+            time_fired=BASE_TIME,
+        ),
+        BASE_TIME,
     )
     service.flush_debounce(BASE_TIME + timedelta(seconds=60))
 
     with factory() as session:
         incidents = session.scalars(select(Incident)).all()
 
-    assert incidents == []
+    assert len(incidents) == 1
+    assert incidents[0].status == "resolved"
     assert service.diagnostics() == []
 
 
@@ -224,52 +253,72 @@ def test_reconciliation_keeps_real_offline_and_resolves_invalid_history() -> Non
     assert incidents == {"fan.helper": "resolved", "physical-offline": "open"}
 
 
-def test_reconciliation_resolves_historical_tts_stt_and_dlna_incidents() -> None:
+def test_reconciliation_resolves_historical_excluded_incidents_keyed_by_device_id() -> None:
     service, factory = make_service()
-    service.register_entity_mapping("media_player.dlna_living_room", "dlna-device")
     with factory.begin() as session:
-        tts = Device(
-            entity_id="tts.google_translate",
-            domain="tts",
-            is_available=False,
-            name="Google Translate",
+        excluded = [
+            Device(entity_id="tts.google_translate", domain="tts", is_available=False),
+            Device(entity_id="tts.cloud", domain="tts", is_available=False),
+            Device(entity_id="stt.whisper", domain="stt", is_available=False),
+            Device(entity_id="stt.piper", domain="stt", is_available=False),
+            Device(entity_id="media_player.sala", domain="media_player", is_available=False, name="DLNA sala"),
+            Device(entity_id="media_player.cucina", domain="media_player", is_available=False, name="DLNA cucina"),
+            Device(entity_id="media_player.dlna_camera", domain="media_player", is_available=False),
+        ]
+        real = Device(
+            entity_id="binary_sensor.real", domain="binary_sensor", is_available=False,
+            name="Sensore reale",
         )
-        stt = Device(
-            entity_id="stt.whisper",
-            domain="stt",
-            is_available=False,
-            name="Whisper",
-        )
-        dlna = Device(
-            entity_id="media_player.dlna_living_room",
-            domain="media_player",
-            is_available=False,
-            name="DLNA soggiorno",
-        )
-        session.add_all([tts, stt, dlna])
+        session.add_all([*excluded, real])
         session.flush()
         session.add_all(
             [
                 Incident(
                     device_id=device.id,
-                    entity_id=device.entity_id,
+                    entity_id=f"historical-device-{index}",
                     kind="availability",
                     severity="warning",
                     status="open",
-                    title=f"{device.name} non disponibile",
+                    title=f"{device.entity_id} non disponibile",
                 )
-                for device in (tts, stt, dlna)
+                for index, device in enumerate(excluded, start=1)
+            ]
+            + [
+                Incident(
+                    device_id=real.id,
+                    entity_id="historical-real-device",
+                    kind="availability",
+                    severity="critical",
+                    status="open",
+                    title="Sensore reale non disponibile",
+                )
             ]
         )
 
     resolved = service.reconcile_open_incidents(BASE_TIME)
 
     assert {incident.entity_id for incident in resolved} == {
-        "tts.google_translate",
-        "stt.whisper",
-        "media_player.dlna_living_room",
+        f"historical-device-{index}" for index in range(1, 8)
     }
     with factory() as session:
-        incidents = session.scalars(select(Incident)).all()
-    assert all(incident.status == "resolved" for incident in incidents)
-    assert all(incident.resolved_at is not None for incident in incidents)
+        incidents = {incident.entity_id: incident for incident in session.scalars(select(Incident))}
+    assert all(
+        incidents[f"historical-device-{index}"].status == "resolved"
+        and incidents[f"historical-device-{index}"].resolved_at is not None
+        for index in range(1, 8)
+    )
+    assert incidents["historical-real-device"].status == "open"
+    resolved_at = {
+        key: incident.resolved_at
+        for key, incident in incidents.items()
+        if key.startswith("historical-device-")
+    }
+
+    assert service.reconcile_open_incidents(BASE_TIME + timedelta(minutes=1)) == []
+    with factory() as session:
+        incidents = {incident.entity_id: incident for incident in session.scalars(select(Incident))}
+    assert all(
+        incidents[f"historical-device-{index}"].resolved_at
+        == resolved_at[f"historical-device-{index}"]
+        for index in range(1, 8)
+    )

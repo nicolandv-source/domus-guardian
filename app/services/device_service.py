@@ -307,10 +307,16 @@ class DeviceService:
     @staticmethod
     def _is_excluded_incident(incident: Incident) -> bool:
         device = incident.device
-        domain = incident.entity_id.partition(".")[0]
-        return domain in {"tts", "stt"} or DeviceService._is_dlna(
-            incident.entity_id,
-            device.name if device is not None else None,
+        identities = [(incident.entity_id, None)]
+        # Grouped availability incidents use the Home Assistant device_id as
+        # their incident key.  Historical rows can therefore not be classified
+        # from the key alone: use their linked entity as a second identity.
+        if device is not None:
+            identities.append((device.entity_id, device.name))
+        return any(
+            entity_id.partition(".")[0] in {"tts", "stt"}
+            or DeviceService._is_dlna(entity_id, name)
+            for entity_id, name in identities
         )
 
     @staticmethod
