@@ -1,5 +1,6 @@
 import asyncio
 import json
+import threading
 
 import pytest
 
@@ -125,6 +126,35 @@ async def test_authenticates_subscribes_and_publishes_event() -> None:
         "Authorization": "Bearer secret"
     }
     assert received[0]["data"]["entity_id"] == "sensor.domus_test"
+
+
+@pytest.mark.asyncio
+async def test_slow_event_handler_does_not_block_event_loop() -> None:
+    websocket = FakeWebSocket()
+    bus = EventBus()
+    loop = asyncio.get_running_loop()
+    loop_processed_handler_start = asyncio.Event()
+    allow_handler_to_finish = threading.Event()
+
+    def slow_handler(_payload: dict[str, object]) -> None:
+        loop.call_soon_threadsafe(loop_processed_handler_start.set)
+        assert allow_handler_to_finish.wait(timeout=1)
+
+    bus.subscribe("entity_registry_loaded", slow_handler)
+    client = HomeAssistantWebSocketClient(
+        "ws://home-assistant.test/api/websocket",
+        "secret",
+        bus,
+        lambda *_args, **_kwargs: FakeConnection(websocket),
+    )
+
+    run_once = asyncio.create_task(client.run_once())
+    started_at = loop.time()
+    await asyncio.wait_for(loop_processed_handler_start.wait(), timeout=0.25)
+    assert loop.time() - started_at < 0.25
+
+    allow_handler_to_finish.set()
+    await run_once
 
 
 @pytest.mark.asyncio
