@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.0.4 - unreleased
+
+- Il watchdog PostgreSQL effettua fino a tre tentativi con backoff esponenziale
+  cooperativo: le attese non bloccano EventBus, WebSocket o loop async.
+- Anche un errore durante il reset prudente del pool SQLAlchemy viene gestito:
+  il watchdog continua il ciclo successivo e può recuperare da un errore DB
+  transitorio senza riavviare servizi.
+- Gli incidenti availability storici di TTS/STT e DLNA vengono riconciliati come
+  risolti, senza cancellare lo storico; queste sorgenti non aprono nuovi
+  incidenti.
+
 ## 1.0.3 - unreleased
 
 - Corretto il debounce availability: un recupero prima della scadenza annulla

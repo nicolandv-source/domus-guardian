@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from datetime import datetime, timezone
+from typing import Any
 
 from sqlalchemy.orm import Session
 from sqlalchemy import select
@@ -42,8 +43,16 @@ class DeviceService:
         self._profile_for = profile_for
         self._maintenance = maintenance_repository or MaintenanceRepository()
 
-    def register_entity_mapping(self, entity_id: str, device_id: str | None) -> None:
-        self._grouping.register_entity_mapping(entity_id, device_id)
+    def register_entity_mapping(
+        self,
+        entity_id: str,
+        device_id: str | None,
+        platform: str | None = None,
+    ) -> None:
+        self._grouping.register_entity_mapping(entity_id, device_id, platform)
+
+    def register_device_registry_entry(self, entry: dict[str, Any]) -> None:
+        self._grouping.register_device_registry_entry(entry)
 
     def is_physical_entity(self, entity_id: str) -> bool:
         return self._grouping.is_physical_entity(entity_id)
@@ -58,9 +67,14 @@ class DeviceService:
         with self._session_factory() as session:
             with session.begin():
                 self._devices.upsert(session, dto)
-                if not self._monitors_availability(dto):
+                if dto.domain in {"tts", "stt"}:
                     return None
-                grouped = self._grouping.update(dto)
+                # Keep each physical registry entity's state for sibling-aware
+                # reconciliation during the initial Home Assistant snapshot.
+                self._grouping.update(dto)
+                grouped = self._grouping.snapshot_for_entity(dto.entity_id)
+                if grouped is None:
+                    return None
                 change = self._debouncer.process_state_change(
                     grouped.device_id,
                     grouped.is_available,
@@ -87,7 +101,12 @@ class DeviceService:
         with self._session_factory() as session:
             with session.begin():
                 for incident in self._incidents.list_open_availability(session):
-                    grouped = self._grouping.snapshot(incident.entity_id)
+                    source_entity_id = self._incident_source_entity_id(incident)
+                    grouped = (
+                        self._grouping.snapshot_for_entity(source_entity_id)
+                        if source_entity_id
+                        else self._grouping.snapshot(incident.entity_id)
+                    )
                     group_id = grouped.device_id if grouped is not None else incident.entity_id
                     if self._maintenance.get_active(session, group_id, now):
                         continue
@@ -97,16 +116,18 @@ class DeviceService:
                         if grouped is not None
                         else self._incident_device_available(incident)
                     )
-                    # Historical availability incidents for UI helpers are
-                    # invalid: helpers without a registry device never enter
-                    # physical-device monitoring.
+                    # Historical availability incidents for UI helpers and
+                    # excluded service integrations are invalid: neither can
+                    # enter physical-device monitoring now.  Resolve them but
+                    # never delete them, so the incident audit trail remains.
                     is_helper = (
                         grouped is None
                         and incident.device is not None
                         and incident.entity_id == incident.device.entity_id
                         and not self._grouping.is_physical_entity(incident.entity_id)
                     )
-                    if available or is_helper:
+                    is_excluded_history = self._is_excluded_incident(incident)
+                    if available or is_helper or is_excluded_history:
                         incident.status = "resolved"
                         incident.resolved_at = now
                         resolved.append(incident)
@@ -295,10 +316,25 @@ class DeviceService:
         return "available" if state else "unavailable"
 
     @staticmethod
-    def _monitors_availability(dto: StateChangedDTO) -> bool:
-        # TTS/STT are service entities. They are commonly unavailable while idle
-        # and do not represent a physical device health condition.
-        return dto.domain not in {"tts", "stt"}
+    def _is_excluded_incident(incident: Incident) -> bool:
+        device = incident.device
+        identities = [incident.entity_id]
+        # Grouped availability incidents use the Home Assistant device_id as
+        # their incident key.  Historical rows can therefore not be classified
+        # from the key alone: use their linked entity as a second identity.
+        if device is not None:
+            identities.append(device.entity_id)
+        return any(
+            entity_id.partition(".")[0] in {"tts", "stt"} for entity_id in identities
+        )
+
+    @staticmethod
+    def _incident_source_entity_id(incident: Incident) -> str | None:
+        if incident.device is not None:
+            return incident.device.entity_id
+        if incident.entity_id.startswith("media_player."):
+            return incident.entity_id
+        return None
 
     def _incident_device_available(self, incident: Incident) -> bool:
         return incident.device is not None and incident.device.is_available

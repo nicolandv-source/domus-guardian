@@ -3,8 +3,15 @@
 Backend FastAPI per monitorare dispositivi, disponibilità e incidenti di una
 installazione Home Assistant OS.
 
-Versione corrente: **1.0.3** (in preparazione). La v1 consolida WebSocket, persistenza,
+Versione corrente: **1.0.4** (in preparazione). La v1 consolida WebSocket, persistenza,
 stabilizzazione di dispositivi instabili, health pesato, notifiche e watchdog
+interno in un unico servizio locale.
+
+## Documentazione di progetto
+
+- [Report completo Notion-ready](docs/NOTION_PROJECT_REPORT.md)
+- [Riepilogo tecnico della release 1.0.4](docs/RELEASE_1.0.4_TECHNICAL_SUMMARY.md)
+- [Report operativo e attivita pendenti](docs/OPERATIONS_REPORT_2026-08-02.md)
 
 ### Monitoraggio availability
 
@@ -13,7 +20,6 @@ di Home Assistant (o gli eventi che riportano esplicitamente un `device_id`).
 Gruppi e helper UI senza un dispositivo fisico non aprono incidenti; la
 disponibilità di un dispositivo con più entità è aggregata e rimane valida se
 almeno una delle sue entità è disponibile.
-interno in un unico servizio locale.
 
 ## Architettura
 
@@ -49,9 +55,11 @@ peso dei dispositivi offline e il peso totale dei dispositivi stabilizzati;
 TV, TTS e dispositivi di test incidono quindi molto meno di porte, allarmi e
 luci principali.
 
-Le entità nei domini di servizio `tts` e `stt` sono escluse dal monitoraggio di
-disponibilità: il loro stato normalmente `unavailable` non rappresenta un
-dispositivo fisico offline e non genera incidenti.
+Le entità nei domini di servizio `tts` e `stt`, oltre alle sorgenti DLNA,
+sono escluse dal monitoraggio di disponibilità: il loro stato normalmente
+`unavailable` non rappresenta un dispositivo fisico offline e non genera
+incidenti. Gli eventuali incidenti storici vengono chiusi conservandone lo
+storico.
 
 ## Manutenzione / assenza programmata
 
@@ -83,7 +91,9 @@ eventi oltre la soglia richiede una riconnessione sicura. Lo stato è disponibil
 in `/api/v1/watchdog/health` e come `watchdog_status` nell'health esistente.
 I worker di debounce e retry notifiche restano attivi anche se una singola
 operazione transitoria fallisce: l'errore viene registrato senza esporre dati
-sensibili, quindi il ciclo successivo può recuperare autonomamente.
+sensibili, quindi il ciclo successivo può recuperare autonomamente. Per un
+errore PostgreSQL transitorio il watchdog riprova con backoff esponenziale
+cooperativo, senza bloccare l'EventBus.
 
 ## Installazione Home Assistant
 

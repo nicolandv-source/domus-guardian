@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -94,3 +95,72 @@ async def test_watchdog_marks_database_failure_critical_and_resets_pool() -> Non
     assert "database_unavailable" in snapshot.issues
     assert snapshot.actions == ("database_pool_reset",)
     assert resets == [True]
+
+
+@pytest.mark.asyncio
+async def test_watchdog_recovers_from_transient_database_error_without_blocking_loop() -> None:
+    attempts: list[int] = []
+    resets: list[bool] = []
+    event_loop_progress = asyncio.Event()
+
+    def flaky_database() -> None:
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise RuntimeError("temporary database error")
+
+    async def progress_event_loop() -> None:
+        await asyncio.sleep(0)
+        event_loop_progress.set()
+
+    service = WatchdogService(
+        database_check=flaky_database,
+        database_recover=lambda: resets.append(True),
+        websocket=FakeWebSocket(
+            connected=True, last_event_at=datetime.now(timezone.utc)
+        ),
+        event_bus=EventBus(),
+        memory_threshold_mb=100_000,
+        database_retry_attempts=2,
+        database_retry_backoff_seconds=0.01,
+    )
+
+    progress_task = asyncio.create_task(progress_event_loop())
+    snapshot = await service.check_once()
+    await progress_task
+
+    assert event_loop_progress.is_set()
+    assert attempts == [1, 1]
+    assert resets == [True]
+    assert snapshot.status == "healthy"
+    assert snapshot.actions == ("database_pool_reset", "database_retry_succeeded")
+
+
+@pytest.mark.asyncio
+async def test_watchdog_survives_pool_reset_error_and_retries_later() -> None:
+    calls = 0
+
+    def unavailable_database() -> None:
+        raise RuntimeError("database unavailable")
+
+    def broken_recovery() -> None:
+        nonlocal calls
+        calls += 1
+        raise RuntimeError("pool reset failed")
+
+    service = WatchdogService(
+        database_check=unavailable_database,
+        database_recover=broken_recovery,
+        websocket=FakeWebSocket(
+            connected=True, last_event_at=datetime.now(timezone.utc)
+        ),
+        event_bus=EventBus(),
+        memory_threshold_mb=100_000,
+        database_retry_attempts=2,
+        database_retry_backoff_seconds=0,
+    )
+
+    snapshot = await service.check_once()
+
+    assert snapshot.status == "critical"
+    assert snapshot.actions == ()
+    assert calls == 1

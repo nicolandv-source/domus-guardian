@@ -24,6 +24,10 @@ class HomeAssistantAdapter:
             self.handle_entity_registry_loaded,
         )
         self._event_bus.subscribe(
+            "device_registry_loaded",
+            self.handle_device_registry_loaded,
+        )
+        self._event_bus.subscribe(
             "ha_state_snapshot_loaded",
             self.handle_state_snapshot_loaded,
         )
@@ -35,6 +39,10 @@ class HomeAssistantAdapter:
             self.handle_entity_registry_loaded,
         )
         self._event_bus.unsubscribe(
+            "device_registry_loaded",
+            self.handle_device_registry_loaded,
+        )
+        self._event_bus.unsubscribe(
             "ha_state_snapshot_loaded",
             self.handle_state_snapshot_loaded,
         )
@@ -44,7 +52,12 @@ class HomeAssistantAdapter:
             self._device_service.register_entity_mapping(
                 entry.get("entity_id", ""),
                 entry.get("device_id"),
+                entry.get("platform"),
             )
+
+    def handle_device_registry_loaded(self, payload: dict[str, Any]) -> None:
+        for entry in payload.get("entries", []):
+            self._device_service.register_device_registry_entry(entry)
 
     def handle_state_snapshot_loaded(self, _: dict[str, Any]) -> None:
         self._device_service.reconcile_open_incidents()

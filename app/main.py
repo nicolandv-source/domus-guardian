@@ -65,7 +65,7 @@ def notification_policy() -> NotificationPolicy:
     )
 
 
-def watchdog_options() -> tuple[int, timedelta, int]:
+def watchdog_options() -> tuple[int, timedelta, int, int, float]:
     """Read watchdog options without requiring a settings.py migration."""
     interval_seconds = max(
         10, min(int(os.getenv("WATCHDOG_INTERVAL_SECONDS", "60")), 3600)
@@ -76,7 +76,17 @@ def watchdog_options() -> tuple[int, timedelta, int]:
     memory_threshold_mb = max(
         64, min(int(os.getenv("WATCHDOG_MEMORY_THRESHOLD_MB", "512")), 4096)
     )
-    return interval_seconds, timedelta(minutes=stale_minutes), memory_threshold_mb
+    retry_attempts = max(1, min(int(os.getenv("WATCHDOG_DATABASE_RETRY_ATTEMPTS", "3")), 5))
+    retry_backoff_seconds = max(
+        0.0, min(float(os.getenv("WATCHDOG_DATABASE_RETRY_BACKOFF_SECONDS", "1")), 30.0)
+    )
+    return (
+        interval_seconds,
+        timedelta(minutes=stale_minutes),
+        memory_threshold_mb,
+        retry_attempts,
+        retry_backoff_seconds,
+    )
 
 
 async def run_debounce_worker(
@@ -178,9 +188,13 @@ async def lifespan(app: FastAPI):
         run_reconciliation_worker(service),
         name="incident-reconciliation-worker",
     )
-    watchdog_interval, websocket_stale_after, watchdog_memory_threshold = (
-        watchdog_options()
-    )
+    (
+        watchdog_interval,
+        websocket_stale_after,
+        watchdog_memory_threshold,
+        watchdog_database_retry_attempts,
+        watchdog_database_retry_backoff_seconds,
+    ) = watchdog_options()
     watchdog = WatchdogService(
         database_check=ping_database,
         database_recover=reset_database_pool,
@@ -189,6 +203,8 @@ async def lifespan(app: FastAPI):
         interval_seconds=watchdog_interval,
         websocket_stale_after=websocket_stale_after,
         memory_threshold_mb=watchdog_memory_threshold,
+        database_retry_attempts=watchdog_database_retry_attempts,
+        database_retry_backoff_seconds=watchdog_database_retry_backoff_seconds,
     )
     watchdog_task = asyncio.create_task(
         watchdog.run_forever(),

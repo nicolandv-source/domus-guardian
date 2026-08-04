@@ -1,5 +1,5 @@
 name: DOMUS Guardian
-version: "1.0.3"
+version: "1.0.4"
 slug: domus_guardian
 description: Motore health, incidenti e notifiche per Home Assistant
 
@@ -22,7 +22,7 @@ ports_description:
 webui: "http://[HOST]:[PORT:8000]/docs"
 
 environment:
-  APP_VERSION: "1.0.3"
+  APP_VERSION: "1.0.4"
   HA_URL: "http://supervisor/core"
   HA_WS_URL: "ws://supervisor/core/websocket"
   HA_REQUEST_TIMEOUT_SECONDS: "10"
@@ -40,6 +40,8 @@ options:
   watchdog_interval_seconds: 60
   watchdog_websocket_stale_minutes: 10
   watchdog_memory_threshold_mb: 512
+  watchdog_database_retry_attempts: 3
+  watchdog_database_retry_backoff_seconds: 1
 
 schema:
   database_host: str
@@ -53,3 +55,5 @@ schema:
   watchdog_interval_seconds: int
   watchdog_websocket_stale_minutes: int
   watchdog_memory_threshold_mb: int
+  watchdog_database_retry_attempts: int
+  watchdog_database_retry_backoff_seconds: float

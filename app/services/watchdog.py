@@ -46,6 +46,8 @@ class WatchdogService:
         interval_seconds: int = 60,
         websocket_stale_after: timedelta = timedelta(minutes=10),
         memory_threshold_mb: int = 512,
+        database_retry_attempts: int = 3,
+        database_retry_backoff_seconds: float = 1.0,
     ) -> None:
         self._database_check = database_check
         self._database_recover = database_recover
@@ -54,6 +56,10 @@ class WatchdogService:
         self._interval_seconds = max(10, min(interval_seconds, 3600))
         self._websocket_stale_after = websocket_stale_after
         self._memory_threshold_mb = max(64, memory_threshold_mb)
+        self._database_retry_attempts = max(1, min(database_retry_attempts, 5))
+        self._database_retry_backoff_seconds = max(
+            0.0, min(database_retry_backoff_seconds, 30.0)
+        )
         self._snapshot = WatchdogSnapshot(
             status="healthy",
             last_check=None,
@@ -79,17 +85,10 @@ class WatchdogService:
         issues: list[str] = []
         actions: list[str] = []
 
-        database_latency_ms: float | None = None
-        started = time.perf_counter()
-        try:
-            await asyncio.to_thread(self._database_check)
-            database_latency_ms = round((time.perf_counter() - started) * 1000, 1)
-            logger.debug("watchdog.db_ok latency_ms=%s", database_latency_ms)
-        except Exception as exc:
+        database_latency_ms, database_actions = await self._check_database()
+        actions.extend(database_actions)
+        if database_latency_ms is None:
             issues.append("database_unavailable")
-            logger.error("watchdog.db_error error=%s", type(exc).__name__)
-            await asyncio.to_thread(self._database_recover)
-            actions.append("database_pool_reset")
 
         websocket_status = self._websocket.status()
         websocket_connected = bool(websocket_status["connected"])
@@ -161,6 +160,50 @@ class WatchdogService:
             event_loop_delay_ms=event_loop_delay_ms,
         )
         return self._snapshot
+
+    async def _check_database(self) -> tuple[float | None, list[str]]:
+        """Check PostgreSQL with bounded, cooperative retry and pool recovery.
+
+        Blocking SQLAlchemy calls stay in a worker thread; retry waits yield to
+        the event loop so WebSocket and EventBus work can keep progressing.
+        """
+        actions: list[str] = []
+        recovery_attempted = False
+        for attempt in range(1, self._database_retry_attempts + 1):
+            started = time.perf_counter()
+            try:
+                await asyncio.to_thread(self._database_check)
+                latency_ms = round((time.perf_counter() - started) * 1000, 1)
+                if attempt > 1:
+                    actions.append("database_retry_succeeded")
+                    logger.info("watchdog.db_recovered attempt=%s", attempt)
+                else:
+                    logger.debug("watchdog.db_ok latency_ms=%s", latency_ms)
+                return latency_ms, actions
+            except Exception as exc:
+                logger.warning(
+                    "watchdog.db_error attempt=%s error=%s",
+                    attempt,
+                    type(exc).__name__,
+                )
+                if not recovery_attempted:
+                    recovery_attempted = True
+                    try:
+                        await asyncio.to_thread(self._database_recover)
+                        actions.append("database_pool_reset")
+                    except Exception as recovery_exc:
+                        logger.error(
+                            "watchdog.db_recovery_error attempt=%s error=%s",
+                            attempt,
+                            type(recovery_exc).__name__,
+                        )
+
+                if attempt < self._database_retry_attempts:
+                    backoff = self._database_retry_backoff_seconds * 2 ** (attempt - 1)
+                    await asyncio.sleep(backoff)
+
+        logger.error("watchdog.db_unavailable attempts=%s", self._database_retry_attempts)
+        return None, actions
 
     async def run_forever(self) -> None:
         loop = asyncio.get_running_loop()
