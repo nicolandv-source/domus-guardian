@@ -101,8 +101,10 @@ class HomeAssistantWebSocketClient:
                         for entry in registry_entries
                         if entry.get("entity_id") and entry.get("device_id")
                     }
-                    self._event_bus.publish(
-                        "entity_registry_loaded", {"entries": registry_entries}
+                    await asyncio.to_thread(
+                        self._event_bus.publish,
+                        "entity_registry_loaded",
+                        {"entries": registry_entries},
                     )
                 else:
                     logger.warning(
@@ -116,7 +118,8 @@ class HomeAssistantWebSocketClient:
                 if device_registry_response.get("type") == "result" and device_registry_response.get(
                     "success"
                 ):
-                    self._event_bus.publish(
+                    await asyncio.to_thread(
+                        self._event_bus.publish,
                         "device_registry_loaded",
                         {"entries": device_registry_response.get("result") or []},
                     )
@@ -137,7 +140,8 @@ class HomeAssistantWebSocketClient:
                             and entity_id not in physical_entity_ids
                         ):
                             continue
-                        self._event_bus.publish(
+                        await asyncio.to_thread(
+                            self._event_bus.publish,
                             "state_changed",
                             {
                                 "time_fired": state.get("last_updated"),
@@ -148,7 +152,9 @@ class HomeAssistantWebSocketClient:
                                 },
                             },
                         )
-                    self._event_bus.publish("ha_state_snapshot_loaded", {})
+                    await asyncio.to_thread(
+                        self._event_bus.publish, "ha_state_snapshot_loaded", {}
+                    )
                     logger.info("Stati iniziali Home Assistant caricati")
                 else:
                     logger.warning(
@@ -182,7 +188,9 @@ class HomeAssistantWebSocketClient:
                     event = message.get("event") or {}
                     if event.get("event_type") == "state_changed":
                         self._last_event_at = datetime.now(timezone.utc)
-                    self._event_bus.publish("state_changed", event)
+                    await asyncio.to_thread(
+                        self._event_bus.publish, "state_changed", event
+                    )
         finally:
             self._connected = False
             self._websocket = None
