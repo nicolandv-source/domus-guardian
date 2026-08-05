@@ -27,6 +27,7 @@ from app.repositories.notifications import NotificationRepository
 from app.services.device_debounce import DeviceDebouncer
 from app.services.device_grouping import DeviceGrouping
 from app.services.device_service import DeviceService
+from app.services.entity_monitoring_policy import EntityMonitoringPolicy
 from app.services.health_engine import HealthEngine
 from app.services.health_weights import HealthWeights
 from app.services.notification_engine import NotificationEngine, NotificationPolicy
@@ -151,7 +152,11 @@ async def lifespan(app: FastAPI):
         profile_for=weights.profile_for,
     )
     health_engine = HealthEngine(service, weights)
-    adapter = HomeAssistantAdapter(event_bus, service)
+    adapter = HomeAssistantAdapter(
+        event_bus,
+        service,
+        monitoring_policy=EntityMonitoringPolicy(),
+    )
     adapter.subscribe()
     notification_engine = NotificationEngine(
         event_bus=event_bus,
