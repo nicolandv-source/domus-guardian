@@ -1,5 +1,11 @@
 # DOMUS Guardian — Stato progetto
 
+> Vista d'insieme cross-progetto (v0.1, 05-08-2026): [DOMUS v0.1 — Punto di
+> situazione e priorità](https://app.notion.com/p/3b3f7b385bcf81529854fdcc0e62a6c1)
+> su Notion, e [STATUS.md di domus-platform](https://github.com/nicolandv-source/domus-platform/blob/main/STATUS.md)
+> per Core/Platform/Finance. Guardian resta il modulo con più item P0 aperti
+> sulla DOMUS Master Roadmap.
+
 ## Release locale: 1.0.4 (in preparazione)
 
 DOMUS Guardian è una App locale per Home Assistant OS che monitora la salute
