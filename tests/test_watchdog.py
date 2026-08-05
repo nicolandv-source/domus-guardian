@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app.core.event_bus import EventBus
+from app.services import watchdog
 from app.services.watchdog import WatchdogService
 
 
@@ -27,6 +28,12 @@ class FakeWebSocket:
     async def request_reconnect(self) -> bool:
         self.reconnects += 1
         return True
+
+
+def test_watchdog_memory_metric_is_safe_without_resource(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(watchdog, "resource", None)
+
+    assert WatchdogService._memory_mb() == 0.0
 
 
 @pytest.mark.asyncio
