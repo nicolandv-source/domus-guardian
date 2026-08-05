@@ -23,6 +23,11 @@ Assistant è fornito dal Supervisor e non viene salvato nel repository.
 - Watchdog interno: verifica PostgreSQL, WebSocket, EventBus, loop async,
   memoria e task attivi; può resettare il pool DB o richiedere una
   riconnessione del WebSocket in modo sicuro.
+- Monitoraggio entità configurabile: `GUARDIAN_MONITORED_DOMAINS` abilita una
+  allowlist di domini HA separati da virgola; `GUARDIAN_EXCLUDED_ENTITY_PATTERNS`
+  esclude glob `fnmatch` sull'intero `entity_id`. Entrambe vuote preservano il
+  comportamento storico. Il pattern per Domus Finance non è ancora impostato:
+  va confermato nel registry HA live e configurato operativamente.
 
 ## Stato di validazione corrente
 

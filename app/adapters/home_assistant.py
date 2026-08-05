@@ -7,15 +7,22 @@ from typing import Any
 from app.core.event_bus import EventBus
 from app.dto import StateChangedDTO
 from app.services.device_service import DeviceService
+from app.services.entity_monitoring_policy import EntityMonitoringPolicy
 
 
 logger = logging.getLogger(__name__)
 
 
 class HomeAssistantAdapter:
-    def __init__(self, event_bus: EventBus, device_service: DeviceService) -> None:
+    def __init__(
+        self,
+        event_bus: EventBus,
+        device_service: DeviceService,
+        monitoring_policy: EntityMonitoringPolicy | None = None,
+    ) -> None:
         self._event_bus = event_bus
         self._device_service = device_service
+        self._monitoring_policy = monitoring_policy or EntityMonitoringPolicy.permissive()
 
     def subscribe(self) -> None:
         self._event_bus.subscribe("state_changed", self.handle_state_changed)
@@ -65,6 +72,8 @@ class HomeAssistantAdapter:
     def handle_state_changed(self, event: dict[str, Any]) -> None:
         dto = self.to_dto(event)
         if dto is None:
+            return
+        if not self._monitoring_policy.allows(dto.entity_id):
             return
         # Availability monitoring is reserved for registry-backed physical
         # devices.  A live event normally has no device_id, therefore accept it
