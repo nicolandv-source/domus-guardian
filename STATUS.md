@@ -46,6 +46,31 @@ Assistant è fornito dal Supervisor e non viene salvato nel repository.
 - La build container non è stata eseguita perché Docker non è disponibile
   nell'ambiente di validazione.
 - Nessun deploy o riavvio è stato eseguito per 1.0.4.
+- **Fix event loop bloccato (2026-08-05, mergiato in `main`, commit
+  `5d62244`)**: `EventBus.publish()` veniva chiamato in modo sincrono
+  dentro il loop di lettura WebSocket (`app/ha/websocket.py`), e un handler
+  che apriva sessioni SQLAlchemy sincrone bloccava il loop asyncio abbastanza
+  da far scadere il keepalive WebSocket (log `watchdog.event_loop_blocked`,
+  delay fino a 92s, disconnessioni). Corretto avvolgendo ogni chiamata a
+  `publish()` con `asyncio.to_thread(...)`, mantenendo l'ordine di
+  pubblicazione. Deployato manualmente sull'add-on live (nessun sync
+  automatico da GitHub per add-on locali), rebuild e restart eseguiti,
+  verificato sano via chiamata diretta a `/api/v1/watchdog/health`
+  (`status: "healthy"`, `event_loop_delay_ms: 1`).
+- **Bug trovato in produzione (2026-08-10) e corretto: stato "degraded"
+  bloccato in modo permanente.** Osservato sull'istanza live:
+  `sensor.domus_guardian_watchdog` fermo su `degraded` da giorni con
+  `event_bus_handler_failures=427` costante — il contatore non cresceva più,
+  quindi il sistema si era già ripreso, ma lo stato restava sbagliato.
+  Causa: `EventBus._handler_failures` è un totale cumulativo per tutta la
+  vita del processo, e il watchdog lo usava direttamente per decidere lo
+  stato — un solo errore passato bastava a bloccare "degraded" per sempre.
+  Aggiunto `EventBus.take_recent_handler_failures()` (finestra dall'ultimo
+  controllo, si resetta alla lettura); il watchdog ora la usa al posto del
+  totale cumulativo, che resta comunque esposto nell'API come diagnostica.
+  Test di regressione aggiunto (`tests/test_watchdog.py`), suite completa
+  66/66 e `ruff check` puliti con Python 3.12.13. Non ancora deployato
+  sull'add-on live.
 
 ## Endpoint principali
 

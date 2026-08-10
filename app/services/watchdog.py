@@ -114,17 +114,18 @@ class WatchdogService:
             logger.debug("watchdog.websocket_ok")
 
         metrics = self._event_bus.metrics()
+        recent_handler_failures = self._event_bus.take_recent_handler_failures()
         if metrics.pending_handlers:
             issues.append("event_bus_busy")
             logger.warning(
                 "watchdog.event_loop_blocked pending_handlers=%s",
                 metrics.pending_handlers,
             )
-        elif metrics.handler_failures:
+        elif recent_handler_failures:
             issues.append("event_bus_handler_errors")
             logger.warning(
                 "watchdog.event_loop_blocked handler_failures=%s",
-                metrics.handler_failures,
+                recent_handler_failures,
             )
         else:
             logger.debug("watchdog.event_loop_ok")
