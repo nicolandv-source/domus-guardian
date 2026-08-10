@@ -57,6 +57,45 @@ async def test_watchdog_is_healthy_for_fresh_dependencies() -> None:
 
 
 @pytest.mark.asyncio
+async def test_watchdog_recovers_from_a_past_handler_failure() -> None:
+    """A handler failure must not latch the watchdog "degraded" forever.
+
+    Regression test: EventBus.metrics().handler_failures is a lifetime
+    total, so gating status on it directly means one past failure keeps
+    reporting "degraded" even after handlers start succeeding again.
+    """
+    event_bus = EventBus()
+
+    def failing_handler(_payload: dict[str, object]) -> None:
+        raise RuntimeError("boom")
+
+    event_bus.subscribe("state_changed", failing_handler)
+    event_bus.publish("state_changed", {})
+    event_bus.unsubscribe("state_changed", failing_handler)
+
+    service = WatchdogService(
+        database_check=lambda: None,
+        database_recover=lambda: None,
+        websocket=FakeWebSocket(
+            connected=True,
+            last_event_at=datetime.now(timezone.utc),
+        ),
+        event_bus=event_bus,
+        memory_threshold_mb=100_000,
+    )
+
+    first = await service.check_once()
+    assert first.status == "degraded"
+    assert first.issues == ("event_bus_handler_errors",)
+    assert first.event_bus_handler_failures == 1
+
+    second = await service.check_once()
+    assert second.status == "healthy"
+    assert second.issues == ()
+    assert second.event_bus_handler_failures == 1
+
+
+@pytest.mark.asyncio
 async def test_watchdog_requests_reconnect_for_stale_websocket() -> None:
     websocket = FakeWebSocket(
         connected=True,

@@ -25,6 +25,7 @@ class EventBus:
         self._listeners: dict[str, list[EventHandler]] = defaultdict(list)
         self._published_events = 0
         self._handler_failures = 0
+        self._handler_failures_since_check = 0
         self._pending_handlers = 0
         self._last_published_at: datetime | None = None
 
@@ -46,9 +47,23 @@ class EventBus:
                 handler(payload)
             except Exception:
                 self._handler_failures += 1
+                self._handler_failures_since_check += 1
                 logger.exception("event_bus.handler_error event_type=%s", event_type)
             finally:
                 self._pending_handlers -= 1
+
+    def take_recent_handler_failures(self) -> int:
+        """Return handler failures since the last call, then reset the window.
+
+        ``metrics().handler_failures`` is a lifetime total, useful for
+        diagnostics but unsuitable for a health check: it would latch a
+        watchdog into "degraded" forever after a single past failure, even
+        once handlers are succeeding again. Callers that gate current health
+        on failure activity should use this instead.
+        """
+        recent = self._handler_failures_since_check
+        self._handler_failures_since_check = 0
+        return recent
 
     def metrics(self) -> EventBusMetrics:
         """Return lightweight diagnostics; the bus intentionally has no queue."""
