@@ -154,23 +154,70 @@ async def test_failed_delivery_is_retried_without_exposing_error() -> None:
 
 
 @pytest.mark.asyncio
-async def test_resolved_event_from_sync_thread_uses_application_loop(monkeypatch) -> None:
+async def test_resolved_event_from_sync_thread_uses_application_loop() -> None:
     event_bus = EventBus()
-    engine, _, _, incident = make_engine()
-    delivered = asyncio.Event()
-
-    async def fake_dispatch(event_type: str, payload: dict[str, object]) -> None:
-        assert event_type == "resolved"
-        assert payload["incident_id"] == incident.id
-        delivered.set()
-
-    monkeypatch.setattr(engine, "dispatch", fake_dispatch)
+    engine, factory, adapter, incident = make_engine()
     engine._event_bus = event_bus
     engine._loop = asyncio.get_running_loop()
+    engine._batch_window = timedelta(seconds=0)
     engine.subscribe()
+
+    with factory.begin() as session:
+        session.get(Incident, incident.id).status = "resolved"
 
     await asyncio.to_thread(
         event_bus.publish, "incident_resolved", {"incident_id": incident.id}
     )
-    await asyncio.wait_for(delivered.wait(), timeout=1)
+    for _ in range(50):
+        if adapter.calls:
+            break
+        await asyncio.sleep(0.02)
+
+    assert len(adapter.calls) == 1
+    assert "RISOLTO" in adapter.calls[0][1]
     assert event_bus.metrics().handler_failures == 0
+
+
+@pytest.mark.asyncio
+async def test_simultaneous_incidents_are_batched_into_one_notification() -> None:
+    event_bus = EventBus()
+    engine, factory, adapter, incident = make_engine()
+    engine._event_bus = event_bus
+    engine._loop = asyncio.get_running_loop()
+    engine._batch_window = timedelta(seconds=0.05)
+    engine.subscribe()
+
+    with factory.begin() as session:
+        second_incident = Incident(
+            entity_id="physical-second",
+            kind="availability",
+            severity="warning",
+            status="open",
+            title="Second device non disponibile",
+            description="Second incident.",
+        )
+        session.add(second_incident)
+        session.flush()
+        second_id = second_incident.id
+
+    event_bus.publish("incident_opened", {"incident_id": incident.id})
+    event_bus.publish("incident_opened", {"incident_id": second_id})
+
+    for _ in range(50):
+        if adapter.calls:
+            break
+        await asyncio.sleep(0.02)
+
+    assert len(adapter.calls) == 1
+    notification_id, title, message = adapter.calls[0]
+    assert notification_id.startswith("domus_batch_opened_")
+    assert "2 dispositivi" in title
+    assert "Test switch" in message
+    assert "Second device" in message
+
+    with factory() as session:
+        notifications = session.scalars(
+            select(Notification).where(Notification.channel == "ha_persistent")
+        ).all()
+    assert len(notifications) == 2
+    assert all(notification.status == "sent" for notification in notifications)

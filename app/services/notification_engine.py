@@ -5,12 +5,13 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 from sqlalchemy.orm import Session
 
 from app.adapters.home_assistant_notify import HomeAssistantNotifyAdapter
 from app.core.event_bus import EventBus
-from app.models import Incident
+from app.models import Incident, Notification
 from app.repositories.notifications import NotificationRepository
 
 
@@ -40,6 +41,7 @@ class NotificationEngine:
         adapter: HomeAssistantNotifyAdapter,
         policy: NotificationPolicy,
         loop: asyncio.AbstractEventLoop | None = None,
+        batch_window: timedelta = timedelta(seconds=8),
     ) -> None:
         self._event_bus = event_bus
         self._session_factory = session_factory
@@ -47,6 +49,9 @@ class NotificationEngine:
         self._adapter = adapter
         self._policy = policy
         self._loop = loop
+        self._batch_window = batch_window
+        self._pending: dict[str, list[dict[str, object]]] = {}
+        self._batch_tasks: dict[str, asyncio.Task[None]] = {}
 
     def subscribe(self) -> None:
         self._event_bus.subscribe("incident_opened", self._on_incident_opened)
@@ -63,15 +68,62 @@ class NotificationEngine:
         self._schedule("resolved", payload)
 
     def _schedule(self, event_type: str, payload: dict[str, object]) -> None:
-        coroutine = self.dispatch(event_type, payload)
         if self._loop is not None and not self._loop.is_closed():
-            asyncio.run_coroutine_threadsafe(coroutine, self._loop)
+            asyncio.run_coroutine_threadsafe(
+                self._enqueue(event_type, payload), self._loop
+            )
             return
         # This fallback is for small synchronous embeddings that do not supply
         # the application loop.  FastAPI supplies one at lifespan startup.
-        asyncio.run(coroutine)
+        asyncio.run(self.dispatch(event_type, payload))
+
+    async def _enqueue(self, event_type: str, payload: dict[str, object]) -> None:
+        """Collect same-moment incidents so a shared outage yields one alert.
+
+        A single flaky Zigbee bridge dropping can open a dozen incidents
+        within a second or two; delivering each as its own persistent
+        notification (and each cascading into Telegram, etc.) drowns the
+        signal. Events of the same type arriving within ``_batch_window``
+        of the first one are grouped into a single delivery.
+        """
+        bucket = self._pending.setdefault(event_type, [])
+        bucket.append(payload)
+        if event_type not in self._batch_tasks:
+            self._batch_tasks[event_type] = asyncio.create_task(
+                self._flush_after_delay(event_type)
+            )
+
+    async def _flush_after_delay(self, event_type: str) -> None:
+        await asyncio.sleep(self._batch_window.total_seconds())
+        payloads = self._pending.pop(event_type, [])
+        self._batch_tasks.pop(event_type, None)
+        if not payloads:
+            return
+        notification_ids = []
+        for payload in payloads:
+            notification_id = await self._record(event_type, payload)
+            if notification_id is not None:
+                notification_ids.append(notification_id)
+        if not notification_ids:
+            return
+        if len(notification_ids) == 1:
+            await self._deliver(notification_ids[0])
+        else:
+            await self._deliver_batch(event_type, notification_ids)
 
     async def dispatch(self, event_type: str, payload: dict[str, object]) -> None:
+        """Record and immediately deliver a single incident notification.
+
+        Bypasses batching; used for direct/synchronous callers (retries,
+        tests) where the caller wants one notification for one incident.
+        """
+        notification_id = await self._record(event_type, payload)
+        if notification_id is not None:
+            await self._deliver(notification_id)
+
+    async def _record(
+        self, event_type: str, payload: dict[str, object]
+    ) -> Optional[int]:
         incident_id = int(payload["incident_id"])
         now = datetime.now(timezone.utc)
         with self._session_factory() as session:
@@ -81,7 +133,7 @@ class NotificationEngine:
                     logger.warning(
                         "Incidente non trovato per notifica: %s", incident_id
                     )
-                    return
+                    return None
                 title, message = self._render(event_type, incident)
                 category = self._category(incident.severity, event_type)
                 log_record, log_created = self._repository.create_once(
@@ -100,7 +152,7 @@ class NotificationEngine:
                     )
 
                 if not self._policy.should_notify(incident.severity):
-                    return
+                    return None
                 notification, created = self._repository.create_once(
                     session,
                     incident=incident,
@@ -111,17 +163,63 @@ class NotificationEngine:
                     message=message,
                 )
                 if not created:
-                    return
+                    return None
                 if event_type == "opened" and self._repository.has_recent_open_delivery(
                     session,
                     incident.entity_id,
                     now - self._policy.cooldown,
                 ):
                     self._repository.mark_suppressed(session, notification)
-                    return
-                notification_id = notification.id
+                    return None
+                return notification.id
 
-        await self._deliver(notification_id)
+    async def _deliver_batch(
+        self, event_type: str, notification_ids: list[int]
+    ) -> None:
+        with self._session_factory() as session:
+            notifications = [
+                notification
+                for notification in (
+                    self._repository.get(session, notification_id)
+                    for notification_id in notification_ids
+                )
+                if notification is not None
+            ]
+        if not notifications:
+            return
+
+        title, message = self._render_batch(event_type, notifications)
+        batch_id = f"domus_batch_{event_type}_{int(datetime.now(timezone.utc).timestamp())}"
+        try:
+            await self._adapter.upsert_persistent_notification(
+                batch_id, title, message
+            )
+        except Exception as exc:
+            with self._session_factory() as session:
+                with session.begin():
+                    for notification in notifications:
+                        row = self._repository.get(session, notification.id)
+                        if row is not None:
+                            self._repository.mark_failed(
+                                session, row, type(exc).__name__
+                            )
+            logger.warning(
+                "Invio notifica batch Home Assistant fallito: %s", type(exc).__name__
+            )
+            return
+
+        now = datetime.now(timezone.utc)
+        with self._session_factory() as session:
+            with session.begin():
+                for notification in notifications:
+                    row = self._repository.get(session, notification.id)
+                    if row is not None:
+                        self._repository.mark_sent(session, row, now)
+        logger.info(
+            "Notifica batch Home Assistant inviata: %s dispositivi (%s)",
+            len(notifications),
+            event_type,
+        )
 
     async def retry_failed(self) -> int:
         with self._session_factory() as session:
@@ -169,6 +267,22 @@ class NotificationEngine:
                         session, notification, datetime.now(timezone.utc)
                     )
         logger.info("Notifica Home Assistant inviata: %s", notification_id)
+
+    @staticmethod
+    def _render_batch(
+        event_type: str, notifications: list[Notification]
+    ) -> tuple[str, str]:
+        count = len(notifications)
+        names = [
+            notification.title.split("] ", 1)[-1].removesuffix(" non disponibile")
+            for notification in notifications
+        ]
+        if event_type == "resolved":
+            title = f"[DOMUS · RISOLTO] {count} dispositivi tornati disponibili"
+        else:
+            title = f"[DOMUS · ATTENZIONE] {count} dispositivi non disponibili"
+        message = "\n".join(f"- {name}" for name in names)
+        return title, message
 
     @staticmethod
     def _category(severity: str, event_type: str) -> str:
