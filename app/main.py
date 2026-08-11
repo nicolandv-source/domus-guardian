@@ -66,6 +66,11 @@ def notification_policy() -> NotificationPolicy:
     )
 
 
+def notification_batch_window() -> timedelta:
+    seconds = int(os.getenv("NOTIFICATION_BATCH_WINDOW_SECONDS", "8"))
+    return timedelta(seconds=max(0, min(seconds, 60)))
+
+
 def watchdog_options() -> tuple[int, timedelta, int, int, float]:
     """Read watchdog options without requiring a settings.py migration."""
     interval_seconds = max(
@@ -169,6 +174,7 @@ async def lifespan(app: FastAPI):
         ),
         policy=notification_policy(),
         loop=asyncio.get_running_loop(),
+        batch_window=notification_batch_window(),
     )
     notification_engine.subscribe()
 
