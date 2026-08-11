@@ -69,8 +69,12 @@ Assistant è fornito dal Supervisor e non viene salvato nel repository.
   controllo, si resetta alla lettura); il watchdog ora la usa al posto del
   totale cumulativo, che resta comunque esposto nell'API come diagnostica.
   Test di regressione aggiunto (`tests/test_watchdog.py`), suite completa
-  66/66 e `ruff check` puliti con Python 3.12.13. Non ancora deployato
-  sull'add-on live.
+  66/66 e `ruff check` puliti con Python 3.12.13. Mergiato in `main` (PR #7,
+  commit `d01b4f3`). Deployato sull'add-on live l'11-08-2026 dopo backup HA
+  (`0a060a3c`): rebuild e restart eseguiti, verificato via
+  `/api/v1/watchdog/health` (`status: "healthy"`, `event_bus_handler_failures: 0`)
+  e su `sensor.domus_guardian_watchdog`, tornato `healthy` dopo giorni bloccato
+  su `degraded`.
 
 ## Endpoint principali
 
