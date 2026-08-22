@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -138,6 +138,119 @@ class DeviceService:
                 )
         self._publish_events(events)
         return resolved
+
+    def check_stale_devices(
+        self,
+        profile_for: Callable[[list[Device]], DeviceProfile],
+        now: datetime | None = None,
+    ) -> tuple[list[Incident], list[Incident]]:
+        """Flag devices that stopped reporting state without HA marking them unavailable.
+
+        Independent from the availability debounce: silence is judged from
+        ``Device.last_seen_at`` against a per-category threshold from
+        ``health_weights.json``, not from state. A device already flagged
+        unavailable is left to the availability path; this only watches
+        devices HA still calls available.
+        """
+        now = now or datetime.now(timezone.utc)
+        opened: list[Incident] = []
+        resolved: list[Incident] = []
+        with self._session_factory() as session:
+            with session.begin():
+                grouped_devices = self._grouping.all_snapshots()
+                entity_ids = {
+                    entity_id
+                    for grouped in grouped_devices
+                    for entity_id in grouped.entity_ids
+                }
+                known_devices = {
+                    device.entity_id: device
+                    for device in session.scalars(
+                        select(Device).where(Device.entity_id.in_(entity_ids))
+                    )
+                }
+                for grouped in grouped_devices:
+                    devices = [
+                        known_devices[entity_id]
+                        for entity_id in grouped.entity_ids
+                        if entity_id in known_devices
+                    ]
+                    if not devices:
+                        continue
+                    if self._maintenance.get_active(session, grouped.device_id, now):
+                        resolved.extend(
+                            self._incidents.resolve_staleness(
+                                session, [grouped.device_id], now
+                            )
+                        )
+                        continue
+
+                    profile = profile_for(devices)
+                    last_seen = max(
+                        (
+                            self._as_aware(device.last_seen_at)
+                            for device in devices
+                            if device.last_seen_at
+                        ),
+                        default=None,
+                    )
+                    is_stale = (
+                        profile.staleness_minutes is not None
+                        and grouped.is_available
+                        and last_seen is not None
+                        and now - last_seen > timedelta(minutes=profile.staleness_minutes)
+                    )
+                    if not is_stale:
+                        resolved.extend(
+                            self._incidents.resolve_staleness(
+                                session, [grouped.device_id], now
+                            )
+                        )
+                        continue
+
+                    representative = next(
+                        (
+                            device
+                            for device in devices
+                            if device.entity_id == grouped.representative_entity_id
+                        ),
+                        devices[0],
+                    )
+                    minutes_silent = int((now - last_seen).total_seconds() // 60)
+                    incident, created = self._incidents.open_staleness(
+                        session,
+                        representative,
+                        grouped.device_id,
+                        self._staleness_severity(profile.category),
+                        minutes_silent=minutes_silent,
+                        threshold_minutes=profile.staleness_minutes,
+                    )
+                    if created:
+                        logger.warning(
+                            "Incidente silenzio aperto: %s (%s minuti)",
+                            grouped.device_id,
+                            minutes_silent,
+                        )
+                        opened.append(incident)
+        events = [("incident_opened", self._incident_payload(incident)) for incident in opened]
+        events.extend(
+            ("incident_resolved", self._incident_payload(incident)) for incident in resolved
+        )
+        self._publish_events(events)
+        return opened, resolved
+
+    @staticmethod
+    def _as_aware(value: datetime) -> datetime:
+        # SQLite (used in tests) does not round-trip tzinfo on DateTime(timezone=True)
+        # columns; PostgreSQL does. Treat a naive read as UTC, matching how it was written.
+        return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+    @staticmethod
+    def _staleness_severity(category: str) -> str:
+        # One notch softer than availability: silence is inferred, not
+        # confirmed offline by Home Assistant, so it should never read as
+        # equally certain as a reported ``unavailable`` state.
+        return {"critical": "warning", "important": "info"}.get(category, "info")
 
     def flush_debounce(
         self,

@@ -12,10 +12,13 @@ from sqlalchemy.orm import Session
 from app.adapters.home_assistant_notify import HomeAssistantNotifyAdapter
 from app.core.event_bus import EventBus
 from app.models import Incident, Notification
+from app.repositories.incidents import STALENESS_KIND
 from app.repositories.notifications import NotificationRepository
 
 
 logger = logging.getLogger(__name__)
+
+_INCIDENT_TITLE_SUFFIXES = (" non disponibile", " silenzioso")
 
 
 @dataclass(frozen=True)
@@ -269,18 +272,25 @@ class NotificationEngine:
         logger.info("Notifica Home Assistant inviata: %s", notification_id)
 
     @staticmethod
+    def _device_name(title: str) -> str:
+        for suffix in _INCIDENT_TITLE_SUFFIXES:
+            if title.endswith(suffix):
+                return title.removesuffix(suffix)
+        return title
+
+    @classmethod
     def _render_batch(
-        event_type: str, notifications: list[Notification]
+        cls, event_type: str, notifications: list[Notification]
     ) -> tuple[str, str]:
         count = len(notifications)
         names = [
-            notification.title.split("] ", 1)[-1].removesuffix(" non disponibile")
+            cls._device_name(notification.title.split("] ", 1)[-1])
             for notification in notifications
         ]
         if event_type == "resolved":
-            title = f"[DOMUS · RISOLTO] {count} dispositivi tornati disponibili"
+            title = f"[DOMUS · RISOLTO] {count} dispositivi risolti"
         else:
-            title = f"[DOMUS · ATTENZIONE] {count} dispositivi non disponibili"
+            title = f"[DOMUS · ATTENZIONE] {count} dispositivi segnalati"
         message = "\n".join(f"- {name}" for name in names)
         return title, message
 
@@ -288,13 +298,18 @@ class NotificationEngine:
     def _category(severity: str, event_type: str) -> str:
         return "info" if event_type == "resolved" else severity
 
-    @staticmethod
-    def _render(event_type: str, incident: Incident) -> tuple[str, str]:
-        name = incident.title.removesuffix(" non disponibile")
+    @classmethod
+    def _render(cls, event_type: str, incident: Incident) -> tuple[str, str]:
+        name = cls._device_name(incident.title)
         if event_type == "resolved":
+            verb = (
+                "ha ripreso a comunicare"
+                if incident.kind == STALENESS_KIND
+                else "è tornato disponibile"
+            )
             return (
                 f"[DOMUS · RISOLTO] {name}",
-                f"{name} è tornato disponibile. Incidente #{incident.id} risolto.",
+                f"{name} {verb}. Incidente #{incident.id} risolto.",
             )
         label = {"critical": "CRITICO", "warning": "ATTENZIONE", "info": "INFO"}.get(
             incident.severity, "INFO"

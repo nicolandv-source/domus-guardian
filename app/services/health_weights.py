@@ -13,6 +13,7 @@ class DeviceProfile:
     category: str
     weight: float
     include_in_score: bool
+    staleness_minutes: int | None = None
 
 
 class HealthWeights:
@@ -75,4 +76,12 @@ class HealthWeights:
             include_in_score=bool(
                 rule.get("include_in_score", category_config["include_in_score"])
             ),
+            staleness_minutes=self._staleness_minutes(rule, category_config),
         )
+
+    @staticmethod
+    def _staleness_minutes(
+        rule: dict[str, Any], category_config: dict[str, Any]
+    ) -> int | None:
+        value = rule.get("staleness_minutes", category_config.get("staleness_minutes"))
+        return int(value) if value is not None else None

@@ -2,6 +2,15 @@
 
 ## 1.0.4 - unreleased
 
+- Nuovo watchdog temporale per dispositivo: un dispositivo che Home Assistant
+  segnala ancora `available` ma che non aggiorna il proprio stato entro la
+  soglia della sua categoria (`health_weights.json`, per dominio/device_class,
+  non più una soglia unica globale) apre un incidente `staleness` distinto da
+  `availability`, con severità un livello sotto (segnale inferito, non
+  confermato offline da HA) e si risolve da solo al primo aggiornamento
+  successivo. Nuovo worker periodico `device-staleness-worker`
+  (`STALENESS_CHECK_INTERVAL_SECONDS`, default 300s). L'endpoint
+  `/api/v1/incidents` espone ora anche `description`.
 - Il watchdog PostgreSQL effettua fino a tre tentativi con backoff esponenziale
   cooperativo: le attese non bloccano EventBus, WebSocket o loop async.
 - Anche un errore durante il reset prudente del pool SQLAlchemy viene gestito:
