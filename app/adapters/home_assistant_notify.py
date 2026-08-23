@@ -15,17 +15,24 @@ class HomeAssistantNotifyAdapter:
         title: str,
         message: str,
     ) -> None:
+        await self._call_service(
+            "persistent_notification/create",
+            {"notification_id": notification_id, "title": title, "message": message},
+        )
+
+    async def dismiss_persistent_notification(self, notification_id: str) -> None:
+        await self._call_service(
+            "persistent_notification/dismiss",
+            {"notification_id": notification_id},
+        )
+
+    async def _call_service(self, service_path: str, payload: dict[str, str]) -> None:
         if not self._token:
             raise RuntimeError("Token Home Assistant non disponibile")
         headers = {"Authorization": f"Bearer {self._token}"}
-        payload = {
-            "notification_id": notification_id,
-            "title": title,
-            "message": message,
-        }
         async with httpx.AsyncClient(timeout=self._timeout_seconds) as client:
             response = await client.post(
-                f"{self._base_url}/api/services/persistent_notification/create",
+                f"{self._base_url}/api/services/{service_path}",
                 headers=headers,
                 json=payload,
             )

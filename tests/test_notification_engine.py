@@ -17,7 +17,9 @@ from app.services.notification_engine import NotificationEngine, NotificationPol
 class FakeNotifyAdapter:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, str]] = []
+        self.dismissed: list[str] = []
         self.failure: Exception | None = None
+        self.dismiss_failure: Exception | None = None
 
     async def upsert_persistent_notification(
         self, notification_id: str, title: str, message: str
@@ -25,6 +27,11 @@ class FakeNotifyAdapter:
         if self.failure is not None:
             raise self.failure
         self.calls.append((notification_id, title, message))
+
+    async def dismiss_persistent_notification(self, notification_id: str) -> None:
+        if self.dismiss_failure is not None:
+            raise self.dismiss_failure
+        self.dismissed.append(notification_id)
 
 
 def make_engine(
@@ -248,6 +255,98 @@ async def test_outbox_leaves_fresh_pending_notification_alone() -> None:
     assert adapter.calls == []
 
 
+def _resolved_sent_row(
+    factory: sessionmaker, incident: Incident, sent_at: datetime
+) -> int:
+    with factory.begin() as session:
+        row = Notification(
+            incident_id=incident.id,
+            channel="ha_persistent",
+            event_type="resolved",
+            notification_id=f"domus_incident_{incident.id}",
+            correlation_id="resolved-flow",
+            category="info",
+            title="Test switch",
+            message="Test switch è tornato disponibile.",
+            status="sent",
+            sent_at=sent_at,
+        )
+        session.add(row)
+        session.flush()
+        return row.id
+
+
+@pytest.mark.asyncio
+async def test_dismiss_clears_resolved_notification_past_grace_period() -> None:
+    engine, factory, adapter, incident = make_engine()
+    row_id = _resolved_sent_row(
+        factory, incident, datetime.now(timezone.utc) - timedelta(hours=1)
+    )
+
+    dismissed = await engine.dismiss_resolved_notifications()
+
+    assert dismissed == 1
+    assert adapter.dismissed == [f"domus_incident_{incident.id}"]
+    with factory() as session:
+        row = session.get(Notification, row_id)
+    assert row.dismissed_at is not None
+
+
+@pytest.mark.asyncio
+async def test_dismiss_leaves_recent_resolved_notification_alone() -> None:
+    engine, factory, adapter, incident = make_engine()
+    row_id = _resolved_sent_row(factory, incident, datetime.now(timezone.utc))
+
+    dismissed = await engine.dismiss_resolved_notifications()
+
+    assert dismissed == 0
+    assert adapter.dismissed == []
+    with factory() as session:
+        row = session.get(Notification, row_id)
+    assert row.dismissed_at is None
+
+
+@pytest.mark.asyncio
+async def test_dismiss_never_touches_open_incident_notification() -> None:
+    engine, factory, adapter, incident = make_engine()
+    with factory.begin() as session:
+        session.add(
+            Notification(
+                incident_id=incident.id,
+                channel="ha_persistent",
+                event_type="opened",
+                notification_id=f"domus_incident_{incident.id}",
+                correlation_id="open-flow",
+                category="critical",
+                title="Test switch non disponibile",
+                message="Test switch non disponibile.",
+                status="sent",
+                sent_at=datetime.now(timezone.utc) - timedelta(days=1),
+            )
+        )
+
+    dismissed = await engine.dismiss_resolved_notifications()
+
+    assert dismissed == 0
+    assert adapter.dismissed == []
+
+
+@pytest.mark.asyncio
+async def test_dismiss_failure_leaves_row_for_next_sweep() -> None:
+    engine, factory, adapter, incident = make_engine()
+    adapter.dismiss_failure = RuntimeError("HA unreachable")
+    row_id = _resolved_sent_row(
+        factory, incident, datetime.now(timezone.utc) - timedelta(hours=1)
+    )
+
+    dismissed = await engine.dismiss_resolved_notifications()
+
+    assert dismissed == 0
+    with factory() as session:
+        row = session.get(Notification, row_id)
+    assert row.dismissed_at is None
+
+
 @pytest.mark.asyncio
 async def test_simultaneous_incidents_are_batched_into_one_notification() -> None:
     event_bus = EventBus()
@@ -299,3 +398,6 @@ async def test_simultaneous_incidents_are_batched_into_one_notification() -> Non
         ).all()
     assert len(notifications) == 2
     assert all(notification.status == "sent" for notification in notifications)
+    # The batch id is what Home Assistant actually holds; each row's own
+    # per-incident id would point cleanup at a card that was never created.
+    assert all(notification.notification_id == notification_id for notification in notifications)
