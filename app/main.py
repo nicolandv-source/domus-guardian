@@ -17,6 +17,7 @@ from sqlalchemy import select
 
 from app.adapters.home_assistant import HomeAssistantAdapter
 from app.adapters.home_assistant_notify import HomeAssistantNotifyAdapter
+from app.adapters.home_assistant_state import HomeAssistantStateAdapter
 from app.core.event_bus import EventBus
 from app.database import SessionLocal, ping_database, reset_database_pool
 from app.ha.websocket import HomeAssistantWebSocketClient
@@ -31,6 +32,7 @@ from app.services.entity_monitoring_policy import EntityMonitoringPolicy
 from app.services.health_engine import HealthEngine
 from app.services.health_weights import HealthWeights
 from app.services.notification_engine import NotificationEngine, NotificationPolicy
+from app.services.sensor_publisher import SensorPublisher
 from app.services.watchdog import WatchdogService
 from app.settings import get_settings
 
@@ -91,6 +93,68 @@ def staleness_check_interval_seconds() -> float:
 def ha_registry_refresh_interval_seconds() -> float:
     minutes = int(os.getenv("HA_REGISTRY_REFRESH_MINUTES", "360"))
     return max(30, min(minutes, 10080)) * 60
+
+
+def sensor_publish_interval_seconds() -> float:
+    seconds = int(os.getenv("HA_SENSOR_PUBLISH_INTERVAL_SECONDS", "30"))
+    return max(10, min(seconds, 3600))
+
+
+def health_snapshot_payload(
+    device_service: DeviceService,
+    health_engine: HealthEngine,
+    weights: HealthWeights,
+    watchdog: WatchdogService,
+) -> dict[str, object]:
+    """Shared by ``/api/v1/ha/health`` and the sensor publisher — one place
+    computing Guardian's health so the REST API and the native HA sensors
+    can never drift apart."""
+    database_connected = False
+    database_error: str | None = None
+    try:
+        ping_database()
+        database_connected = True
+    except Exception as exc:
+        logger.exception("Calcolo health DOMUS fallito")
+        database_error = type(exc).__name__
+
+    # Keep persistent incidents and health in agreement even immediately after
+    # a process restart, when in-memory debounce state has not been rebuilt.
+    device_service.reconcile_open_incidents()
+    with SessionLocal() as session:
+        incidents = IncidentRepository().list_open_availability(session)
+        snapshot = health_engine.snapshot_from_incidents(
+            database_connected,
+            incidents,
+            device_service.diagnostics(weights.profile_for),
+        )
+    return {
+        "score": snapshot.score,
+        "status": snapshot.status,
+        "database_connected": database_connected,
+        "database_error": database_error,
+        "active_incidents": snapshot.active_incidents,
+        "critical_incidents": snapshot.critical_incidents,
+        "warning_incidents": snapshot.warning_incidents,
+        "offline_devices": snapshot.offline_devices,
+        "total_weight": snapshot.total_weight,
+        "offline_devices_weighted": snapshot.offline_weight,
+        "watchdog_status": watchdog.snapshot().status,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def sensor_snapshot_provider(
+    device_service: DeviceService,
+    health_engine: HealthEngine,
+    weights: HealthWeights,
+    watchdog: WatchdogService,
+) -> dict[str, object]:
+    payload = health_snapshot_payload(device_service, health_engine, weights, watchdog)
+    watchdog_snapshot = watchdog.snapshot()
+    payload["watchdog_issues"] = list(watchdog_snapshot.issues)
+    payload["last_websocket_event_at"] = watchdog_snapshot.last_websocket_event_at
+    return payload
 
 
 def watchdog_options() -> tuple[int, timedelta, int, int, float]:
@@ -176,6 +240,20 @@ async def run_reconciliation_worker(
             raise
         except Exception:
             logger.exception("incident_reconciliation_worker_failed")
+        await asyncio.sleep(interval_seconds)
+
+
+async def run_sensor_publish_worker(
+    publisher: SensorPublisher, *, interval_seconds: float = 30.0
+) -> None:
+    """Keep the native sensor.domus_* entities in HA current."""
+    while True:
+        try:
+            await publisher.publish()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("sensor_publish_worker_failed")
         await asyncio.sleep(interval_seconds)
 
 
@@ -319,6 +397,22 @@ async def lifespan(app: FastAPI):
         watchdog.run_forever(),
         name="domus-watchdog",
     )
+    sensor_publisher = SensorPublisher(
+        adapter=HomeAssistantStateAdapter(
+            base_url=settings.ha_url,
+            token=settings.ha_token,
+            timeout_seconds=settings.ha_request_timeout_seconds,
+        ),
+        snapshot_provider=lambda: sensor_snapshot_provider(
+            service, health_engine, weights, watchdog
+        ),
+    )
+    sensor_publish_task = asyncio.create_task(
+        run_sensor_publish_worker(
+            sensor_publisher, interval_seconds=sensor_publish_interval_seconds()
+        ),
+        name="sensor-publish-worker",
+    )
     app.state.device_service = service
     app.state.health_engine = health_engine
     app.state.health_weights = weights
@@ -332,6 +426,7 @@ async def lifespan(app: FastAPI):
     app.state.staleness_task = staleness_task
     app.state.watchdog = watchdog
     app.state.watchdog_task = watchdog_task
+    app.state.sensor_publish_task = sensor_publish_task
 
     try:
         yield
@@ -347,6 +442,7 @@ async def lifespan(app: FastAPI):
             reconciliation_task,
             staleness_task,
             watchdog_task,
+            sensor_publish_task,
         ):
             task.cancel()
         for task in (
@@ -358,6 +454,7 @@ async def lifespan(app: FastAPI):
             reconciliation_task,
             staleness_task,
             watchdog_task,
+            sensor_publish_task,
         ):
             with suppress(asyncio.CancelledError):
                 await task
@@ -576,39 +673,12 @@ def get_notification(notification_id: int) -> dict[str, object]:
 
 @app.get("/api/v1/ha/health")
 def health() -> dict[str, object]:
-    database_connected = False
-    database_error: str | None = None
-    try:
-        ping_database()
-        database_connected = True
-    except Exception as exc:
-        logger.exception("Calcolo health DOMUS fallito")
-        database_error = type(exc).__name__
-
-    # Keep persistent incidents and health in agreement even immediately after
-    # a process restart, when in-memory debounce state has not been rebuilt.
-    app.state.device_service.reconcile_open_incidents()
-    with SessionLocal() as session:
-        incidents = IncidentRepository().list_open_availability(session)
-        snapshot = app.state.health_engine.snapshot_from_incidents(
-            database_connected,
-            incidents,
-            app.state.device_service.diagnostics(app.state.health_weights.profile_for),
-        )
-    return {
-        "score": snapshot.score,
-        "status": snapshot.status,
-        "database_connected": database_connected,
-        "database_error": database_error,
-        "active_incidents": snapshot.active_incidents,
-        "critical_incidents": snapshot.critical_incidents,
-        "warning_incidents": snapshot.warning_incidents,
-        "offline_devices": snapshot.offline_devices,
-        "total_weight": snapshot.total_weight,
-        "offline_devices_weighted": snapshot.offline_weight,
-        "watchdog_status": app.state.watchdog.snapshot().status,
-        "updated_at": datetime.now(timezone.utc).isoformat(),
-    }
+    return health_snapshot_payload(
+        app.state.device_service,
+        app.state.health_engine,
+        app.state.health_weights,
+        app.state.watchdog,
+    )
 
 
 @app.get("/api/v1/watchdog/health")

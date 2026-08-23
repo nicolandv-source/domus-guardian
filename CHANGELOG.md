@@ -2,6 +2,17 @@
 
 ## 1.0.4 - unreleased
 
+- Sensori nativi `sensor.domus_*` in Home Assistant: Guardian pubblica ora
+  direttamente su HA (`POST /api/states/{entity_id}`, stesso token Supervisor
+  già usato per le notifiche — nessun secondo token, nessuna modifica alla
+  configurazione HA) cinque entità: `sensor.domus_guardian_health_score`,
+  `_open_incidents`, `_degraded_devices`, `_last_sync` (device_class
+  timestamp) e `_watchdog`. Nuovo worker periodico
+  (`HA_SENSOR_PUBLISH_INTERVAL_SECONDS`, default 30s), un fallimento su un
+  singolo sensore non blocca gli altri né il ciclo successivo. La logica di
+  calcolo dell'health è stata estratta in una funzione condivisa
+  (`health_snapshot_payload`) usata sia da `/api/v1/ha/health` sia dal
+  publisher, cosicché API REST e sensori nativi non possano mai divergere.
 - Refresh periodico registry/stati Home Assistant: finora lo snapshot
   completo (entity registry, device registry, `get_states`) veniva rifatto
   solo all'avvio e ad ogni riconnessione WebSocket imprevista — su una

@@ -10,6 +10,7 @@ from app.main import (
     run_notification_cleanup_worker,
     run_notification_retry_worker,
     run_registry_refresh_worker,
+    run_sensor_publish_worker,
     run_staleness_worker,
 )
 
@@ -122,6 +123,33 @@ async def test_registry_refresh_worker_survives_transient_error() -> None:
         await task
 
     assert client.calls >= 2
+
+
+class FlakyPublisherForSensors:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.recovered = asyncio.Event()
+
+    async def publish(self) -> None:
+        self.calls += 1
+        if self.calls == 1:
+            raise RuntimeError("transient Home Assistant error")
+        self.recovered.set()
+
+
+@pytest.mark.asyncio
+async def test_sensor_publish_worker_survives_transient_error() -> None:
+    publisher = FlakyPublisherForSensors()
+    task = asyncio.create_task(
+        run_sensor_publish_worker(publisher, interval_seconds=0)
+    )
+
+    await asyncio.wait_for(publisher.recovered.wait(), timeout=1)
+    task.cancel()
+    with suppress(asyncio.CancelledError):
+        await task
+
+    assert publisher.calls >= 2
 
 
 class FlakyDeviceServiceForStaleness:
