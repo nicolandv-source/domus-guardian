@@ -2,6 +2,8 @@
 
 ## 1.0.4 - unreleased
 
+- Abilitato il watchdog Supervisor sull'add-on: riavvio automatico in caso di
+  crash del container, senza intervento manuale.
 - Il watchdog PostgreSQL effettua fino a tre tentativi con backoff esponenziale
   cooperativo: le attese non bloccano EventBus, WebSocket o loop async.
 - Anche un errore durante il reset prudente del pool SQLAlchemy viene gestito:
