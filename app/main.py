@@ -63,6 +63,12 @@ def notification_policy() -> NotificationPolicy:
                 1, min(int(os.getenv("NOTIFICATION_COOLDOWN_MINUTES", "10")), 120)
             )
         ),
+        outbox_stale_after=timedelta(
+            seconds=max(
+                30,
+                min(int(os.getenv("NOTIFICATION_OUTBOX_STALE_SECONDS", "120")), 3600),
+            )
+        ),
     )
 
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 import asyncio
 
 import pytest
@@ -179,6 +179,76 @@ async def test_resolved_event_from_sync_thread_uses_application_loop() -> None:
 
 
 @pytest.mark.asyncio
+async def test_dispatch_gives_log_and_persistent_rows_the_same_correlation_id() -> None:
+    engine, factory, adapter, incident = make_engine()
+
+    await engine.dispatch("opened", {"incident_id": incident.id})
+
+    with factory() as session:
+        notifications = session.scalars(select(Notification)).all()
+
+    assert len(notifications) == 2
+    correlation_ids = {n.correlation_id for n in notifications}
+    assert len(correlation_ids) == 1
+    assert next(iter(correlation_ids))
+
+
+@pytest.mark.asyncio
+async def test_outbox_recovers_stale_pending_notification_never_delivered() -> None:
+    engine, factory, adapter, incident = make_engine()
+    stale_created_at = datetime.now(timezone.utc) - timedelta(minutes=10)
+    with factory.begin() as session:
+        stuck = Notification(
+            incident_id=incident.id,
+            channel="ha_persistent",
+            event_type="opened",
+            notification_id=f"domus_incident_{incident.id}",
+            correlation_id="stuck-before-restart",
+            category="critical",
+            title="Test switch non disponibile",
+            message="Test switch non disponibile.",
+            status="pending",
+            created_at=stale_created_at,
+        )
+        session.add(stuck)
+        session.flush()
+        stuck_id = stuck.id
+
+    recovered = await engine.retry_failed()
+
+    assert recovered == 1
+    assert len(adapter.calls) == 1
+    with factory() as session:
+        row = session.get(Notification, stuck_id)
+    assert row.status == "sent"
+    assert row.attempts == 1
+
+
+@pytest.mark.asyncio
+async def test_outbox_leaves_fresh_pending_notification_alone() -> None:
+    engine, factory, adapter, incident = make_engine()
+    with factory.begin() as session:
+        fresh = Notification(
+            incident_id=incident.id,
+            channel="ha_persistent",
+            event_type="opened",
+            notification_id=f"domus_incident_{incident.id}",
+            correlation_id="in-flight",
+            category="critical",
+            title="Test switch non disponibile",
+            message="Test switch non disponibile.",
+            status="pending",
+        )
+        session.add(fresh)
+        session.flush()
+
+    recovered = await engine.retry_failed()
+
+    assert recovered == 0
+    assert adapter.calls == []
+
+
+@pytest.mark.asyncio
 async def test_simultaneous_incidents_are_batched_into_one_notification() -> None:
     event_bus = EventBus()
     engine, factory, adapter, incident = make_engine()
@@ -214,6 +284,14 @@ async def test_simultaneous_incidents_are_batched_into_one_notification() -> Non
     assert "2 dispositivi" in title
     assert "Test switch" in message
     assert "Second device" in message
+
+    with factory() as session:
+        notifications = session.scalars(
+            select(Notification).where(Notification.channel == "ha_persistent")
+        ).all()
+    correlation_ids = {n.correlation_id for n in notifications}
+    assert len(correlation_ids) == 1
+    assert next(iter(correlation_ids))
 
     with factory() as session:
         notifications = session.scalars(
