@@ -71,6 +71,11 @@ def notification_batch_window() -> timedelta:
     return timedelta(seconds=max(0, min(seconds, 60)))
 
 
+def staleness_check_interval_seconds() -> float:
+    seconds = int(os.getenv("STALENESS_CHECK_INTERVAL_SECONDS", "300"))
+    return max(30, min(seconds, 3600))
+
+
 def watchdog_options() -> tuple[int, timedelta, int, int, float]:
     """Read watchdog options without requiring a settings.py migration."""
     interval_seconds = max(
@@ -141,6 +146,23 @@ async def run_reconciliation_worker(
         await asyncio.sleep(interval_seconds)
 
 
+async def run_staleness_worker(
+    service: DeviceService,
+    weights: HealthWeights,
+    *,
+    interval_seconds: float = 300.0,
+) -> None:
+    """Periodically flag devices silent past their category's threshold."""
+    while True:
+        try:
+            service.check_stale_devices(weights.profile_for)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("device_staleness_worker_failed")
+        await asyncio.sleep(interval_seconds)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     event_bus = EventBus()
@@ -199,6 +221,12 @@ async def lifespan(app: FastAPI):
         run_reconciliation_worker(service),
         name="incident-reconciliation-worker",
     )
+    staleness_task = asyncio.create_task(
+        run_staleness_worker(
+            service, weights, interval_seconds=staleness_check_interval_seconds()
+        ),
+        name="device-staleness-worker",
+    )
     (
         watchdog_interval,
         websocket_stale_after,
@@ -229,6 +257,7 @@ async def lifespan(app: FastAPI):
     app.state.debounce_task = debounce_task
     app.state.notification_retry_task = notification_retry_task
     app.state.reconciliation_task = reconciliation_task
+    app.state.staleness_task = staleness_task
     app.state.watchdog = watchdog
     app.state.watchdog_task = watchdog_task
 
@@ -242,6 +271,7 @@ async def lifespan(app: FastAPI):
             debounce_task,
             notification_retry_task,
             reconciliation_task,
+            staleness_task,
             watchdog_task,
         ):
             task.cancel()
@@ -250,6 +280,7 @@ async def lifespan(app: FastAPI):
             debounce_task,
             notification_retry_task,
             reconciliation_task,
+            staleness_task,
             watchdog_task,
         ):
             with suppress(asyncio.CancelledError):
@@ -421,6 +452,7 @@ def list_incidents(
                 "severity": incident.severity,
                 "status": incident.status,
                 "title": incident.title,
+                "description": incident.description,
                 "opened_at": incident.opened_at,
                 "resolved_at": incident.resolved_at,
             }

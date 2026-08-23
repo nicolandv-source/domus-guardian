@@ -1,16 +1,17 @@
 {
   "categories": {
-    "critical": {"weight": 20.0, "include_in_score": true},
-    "important": {"weight": 1.0, "include_in_score": true},
-    "optional": {"weight": 0.05, "include_in_score": true}
+    "critical": {"weight": 20.0, "include_in_score": true, "staleness_minutes": 60},
+    "important": {"weight": 1.0, "include_in_score": true, "staleness_minutes": 720},
+    "optional": {"weight": 0.05, "include_in_score": true, "staleness_minutes": null}
   },
   "thresholds": {"healthy_min_score": 98, "warning_min_score": 80},
   "rules": [
     {"category": "optional", "domains": ["tts", "stt", "media_player", "update"]},
     {"category": "optional", "name_patterns": ["tv", "television", "heybulb", "deco", "test", "finto", "tts", "speaker"]},
-    {"category": "critical", "device_classes": ["door", "garage_door", "window", "opening", "lock", "safety", "smoke", "moisture"]},
-    {"category": "critical", "name_patterns": ["allarme", "alarm", "porta", "door", "finestra", "window", "cancello", "gate", "ingresso", "centrale"]},
-    {"category": "important", "domains": ["binary_sensor", "light", "switch", "cover", "lock", "climate", "fan", "sensor", "camera"]}
+    {"category": "critical", "device_classes": ["door", "garage_door", "window", "opening", "lock", "safety", "smoke", "moisture"], "staleness_minutes": 30},
+    {"category": "critical", "name_patterns": ["allarme", "alarm", "porta", "door", "finestra", "window", "cancello", "gate", "ingresso", "centrale"], "staleness_minutes": 30},
+    {"category": "important", "domains": ["binary_sensor", "sensor"], "staleness_minutes": 1440},
+    {"category": "important", "domains": ["light", "switch", "cover", "lock", "climate", "fan", "camera"]}
   ],
   "default_category": "important"
 }
