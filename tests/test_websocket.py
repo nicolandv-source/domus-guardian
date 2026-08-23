@@ -179,3 +179,84 @@ async def test_reconnects_after_a_transient_websocket_failure(monkeypatch) -> No
         await client.run_forever()
 
     assert calls == 2
+
+
+@pytest.mark.asyncio
+async def test_auth_rejection_raises_instead_of_crashing_silently() -> None:
+    """A stale/invalid token (e.g. after a Supervisor token renewal gone
+    wrong) must surface as a normal ``run_once`` failure, so ``run_forever``
+    retries it exactly like any other transient disconnect instead of the
+    process dying or spinning silently without ever reconnecting."""
+    websocket = FakeWebSocket()
+    websocket.messages = [
+        json.dumps({"type": "auth_required"}),
+        json.dumps({"type": "auth_invalid"}),
+    ]
+    client = HomeAssistantWebSocketClient(
+        "ws://test",
+        "stale-token",
+        EventBus(),
+        lambda *_a, **_k: FakeConnection(websocket),
+    )
+
+    with pytest.raises(RuntimeError, match="Autenticazione"):
+        await client.run_once()
+
+
+@pytest.mark.asyncio
+async def test_reconnect_backoff_doubles_and_caps_at_30_seconds(monkeypatch) -> None:
+    client = HomeAssistantWebSocketClient("ws://test", "secret", EventBus())
+    sleeps: list[float] = []
+    calls = 0
+
+    async def fake_run_once() -> None:
+        nonlocal calls
+        calls += 1
+        if calls > 6:
+            raise asyncio.CancelledError
+        raise RuntimeError("connection dropped")
+
+    async def record_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(client, "run_once", fake_run_once)
+    monkeypatch.setattr(asyncio, "sleep", record_sleep)
+
+    with pytest.raises(asyncio.CancelledError):
+        await client.run_forever()
+
+    assert sleeps == [2, 4, 8, 16, 30, 30]
+
+
+@pytest.mark.asyncio
+async def test_reconnect_backoff_resets_after_a_successful_connection(
+    monkeypatch,
+) -> None:
+    client = HomeAssistantWebSocketClient("ws://test", "secret", EventBus())
+    sleeps: list[float] = []
+    calls = 0
+
+    async def fake_run_once() -> None:
+        nonlocal calls
+        calls += 1
+        # Fail, fail, then one clean connection (returns normally) before
+        # failing twice more: the backoff after the gap must restart at the
+        # base delay, not continue climbing from where it left off.
+        if calls in (1, 2):
+            raise RuntimeError("connection dropped")
+        if calls == 3:
+            return
+        if calls in (4, 5):
+            raise RuntimeError("connection dropped again")
+        raise asyncio.CancelledError
+
+    async def record_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(client, "run_once", fake_run_once)
+    monkeypatch.setattr(asyncio, "sleep", record_sleep)
+
+    with pytest.raises(asyncio.CancelledError):
+        await client.run_forever()
+
+    assert sleeps == [2, 4, 2, 4]

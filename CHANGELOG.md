@@ -2,6 +2,20 @@
 
 ## 1.0.4 - unreleased
 
+- Abilitato il watchdog Supervisor sull'add-on: riavvio automatico in caso di
+  crash del container, senza intervento manuale.
+- Copertura test per riavvio/disconnessione/riconnessione WebSocket (nessun
+  codice applicativo cambiato, solo test): un nuovo test end-to-end fa
+  passare uno stato attraverso due cicli di connessione reali (client
+  WebSocket → adapter → DeviceService, non più solo pezzi isolati) e verifica
+  che una transizione persa durante la disconnessione venga recuperata dal
+  resync e che non nascano dispositivi o incidenti duplicati. Aggiunta anche
+  la verifica esplicita del backoff esponenziale (2s→4s→8s→16s→30s, tetto a
+  30s) e del suo reset dopo una riconnessione riuscita — finora il test
+  esistente verificava solo che un retry avvenisse, non i tempi. Aggiunto un
+  test per il rifiuto di autenticazione (token scaduto/non valido): deve
+  propagarsi come un normale fallimento di connessione, rientrando nel retry
+  con backoff, non bloccare il processo né retryare in modo silenzioso.
 - Nuovo watchdog temporale per dispositivo: un dispositivo che Home Assistant
   segnala ancora `available` ma che non aggiorna il proprio stato entro la
   soglia della sua categoria (`health_weights.json`, per dominio/device_class,
