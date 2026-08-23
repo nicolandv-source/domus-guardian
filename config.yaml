@@ -10,6 +10,7 @@ startup: application
 boot: auto
 init: false
 
+watchdog: true
 homeassistant_api: true
 hassio_api: false
 
