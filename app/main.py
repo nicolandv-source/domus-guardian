@@ -473,6 +473,7 @@ def notification_to_dict(notification: Notification) -> dict[str, object]:
         "channel": notification.channel,
         "event_type": notification.event_type,
         "notification_id": notification.notification_id,
+        "correlation_id": notification.correlation_id,
         "category": notification.category,
         "title": notification.title,
         "message": notification.message,
