@@ -16,6 +16,14 @@
   test per il rifiuto di autenticazione (token scaduto/non valido): deve
   propagarsi come un normale fallimento di connessione, rientrando nel retry
   con backoff, non bloccare il processo né retryare in modo silenzioso.
+- Outbox notifiche completato: ogni notifica (log e Home Assistant) porta ora
+  un `correlation_id` condiviso tra il record di log, la consegna e ogni
+  ritentativo — anche tra le notifiche raggruppate in uno stesso batch.
+  `retry_failed()` (il worker periodico esistente) ora recupera anche le righe
+  `pending` rimaste bloccate oltre `NOTIFICATION_OUTBOX_STALE_SECONDS`
+  (default 120s) — il caso non coperto finora: persistenza avvenuta ma
+  processo interrotto prima della consegna, senza alcun ritentativo
+  automatico. Migrazione `0005_notification_correlation_id`.
 - Nuovo watchdog temporale per dispositivo: un dispositivo che Home Assistant
   segnala ancora `available` ma che non aggiorna il proprio stato entro la
   soglia della sua categoria (`health_weights.json`, per dominio/device_class,

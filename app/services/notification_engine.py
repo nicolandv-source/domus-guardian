@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -26,6 +27,11 @@ class NotificationPolicy:
     notify_important_incidents: bool = True
     cooldown: timedelta = timedelta(minutes=10)
     max_attempts: int = 3
+    # A ``pending`` outbox row older than this was persisted but never
+    # delivered nor failed: the process was interrupted mid-flight. Long
+    # enough to clear the batch window plus normal delivery latency without
+    # racing an in-flight send.
+    outbox_stale_after: timedelta = timedelta(minutes=2)
 
     def should_notify(self, severity: str) -> bool:
         return severity == "critical" or (
@@ -102,9 +108,12 @@ class NotificationEngine:
         self._batch_tasks.pop(event_type, None)
         if not payloads:
             return
+        # One correlation ID for the whole batch: these incidents are
+        # persisted and delivered together as a single outbox round.
+        correlation_id = uuid.uuid4().hex
         notification_ids = []
         for payload in payloads:
-            notification_id = await self._record(event_type, payload)
+            notification_id = await self._record(event_type, payload, correlation_id)
             if notification_id is not None:
                 notification_ids.append(notification_id)
         if not notification_ids:
@@ -120,12 +129,15 @@ class NotificationEngine:
         Bypasses batching; used for direct/synchronous callers (retries,
         tests) where the caller wants one notification for one incident.
         """
-        notification_id = await self._record(event_type, payload)
+        notification_id = await self._record(event_type, payload, uuid.uuid4().hex)
         if notification_id is not None:
             await self._deliver(notification_id)
 
     async def _record(
-        self, event_type: str, payload: dict[str, object]
+        self,
+        event_type: str,
+        payload: dict[str, object],
+        correlation_id: str,
     ) -> Optional[int]:
         incident_id = int(payload["incident_id"])
         now = datetime.now(timezone.utc)
@@ -147,11 +159,15 @@ class NotificationEngine:
                     category=category,
                     title=title,
                     message=message,
+                    correlation_id=correlation_id,
                 )
                 if log_created:
                     self._repository.mark_sent(session, log_record, now)
                     logger.info(
-                        "Notifica DOMUS %s: incidente %s", event_type, incident.id
+                        "Notifica DOMUS %s: incidente %s correlation_id=%s",
+                        event_type,
+                        incident.id,
+                        correlation_id,
                     )
 
                 if not self._policy.should_notify(incident.severity):
@@ -164,6 +180,7 @@ class NotificationEngine:
                     category=category,
                     title=title,
                     message=message,
+                    correlation_id=correlation_id,
                 )
                 if not created:
                     return None
@@ -225,6 +242,16 @@ class NotificationEngine:
         )
 
     async def retry_failed(self) -> int:
+        """Sweep the outbox: retry failed deliveries and recover stuck ones.
+
+        ``failed`` rows are known delivery failures within their attempt
+        budget. ``pending`` rows older than the outbox staleness window were
+        persisted but never delivered nor failed — the process was
+        interrupted between the two. Both are outstanding outbox work; this
+        is the persist-before-send guarantee's other half, without which a
+        row like that would sit forever with no notification ever sent.
+        """
+        now = datetime.now(timezone.utc)
         with self._session_factory() as session:
             retry_ids = [
                 notification.id
@@ -232,6 +259,17 @@ class NotificationEngine:
                     session, self._policy.max_attempts
                 )
             ]
+            stale_ids = [
+                notification.id
+                for notification in self._repository.stale_pending(
+                    session, now - self._policy.outbox_stale_after
+                )
+            ]
+        if stale_ids:
+            logger.warning(
+                "Notifiche pending bloccate recuperate dall'outbox: %s", len(stale_ids)
+            )
+        retry_ids.extend(stale_ids)
         for notification_id in retry_ids:
             await self._deliver(notification_id)
         return len(retry_ids)

@@ -33,6 +33,7 @@ class NotificationRepository:
         category: str,
         title: str,
         message: str,
+        correlation_id: str,
     ) -> tuple[Notification, bool]:
         existing = self.get_for_event(session, incident.id, channel, event_type)
         if existing is not None:
@@ -42,6 +43,7 @@ class NotificationRepository:
             channel=channel,
             event_type=event_type,
             notification_id=f"domus_incident_{incident.id}",
+            correlation_id=correlation_id,
             category=category,
             title=title,
             message=message,
@@ -103,6 +105,27 @@ class NotificationRepository:
                     Notification.channel == "ha_persistent",
                     Notification.status == "failed",
                     Notification.attempts < max_attempts,
+                )
+            )
+        )
+
+    def stale_pending(
+        self, session: Session, older_than: datetime
+    ) -> list[Notification]:
+        """Outbox rows persisted but never delivered nor failed.
+
+        Normally a ``pending`` row is delivered within the same request a
+        moment after being written. One that is still ``pending`` after
+        ``older_than`` means the process was interrupted between persisting
+        it and calling Home Assistant (crash, restart, cancelled task): the
+        outbox record survives, but nothing has retried delivery for it.
+        """
+        return list(
+            session.scalars(
+                select(Notification).where(
+                    Notification.channel == "ha_persistent",
+                    Notification.status == "pending",
+                    Notification.created_at < older_than,
                 )
             )
         )

@@ -63,6 +63,12 @@ def notification_policy() -> NotificationPolicy:
                 1, min(int(os.getenv("NOTIFICATION_COOLDOWN_MINUTES", "10")), 120)
             )
         ),
+        outbox_stale_after=timedelta(
+            seconds=max(
+                30,
+                min(int(os.getenv("NOTIFICATION_OUTBOX_STALE_SECONDS", "120")), 3600),
+            )
+        ),
     )
 
 
@@ -467,6 +473,7 @@ def notification_to_dict(notification: Notification) -> dict[str, object]:
         "channel": notification.channel,
         "event_type": notification.event_type,
         "notification_id": notification.notification_id,
+        "correlation_id": notification.correlation_id,
         "category": notification.category,
         "title": notification.title,
         "message": notification.message,

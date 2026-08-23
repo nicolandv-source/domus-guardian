@@ -122,6 +122,10 @@ class Notification(Base):
     channel: Mapped[str] = mapped_column(String(32), nullable=False)
     event_type: Mapped[str] = mapped_column(String(32), nullable=False)
     notification_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Nullable: rows written before this column existed have none. New rows
+    # always get one from NotificationEngine, tying together the log entry,
+    # the delivery record and every retry attempt for one logical event.
+    correlation_id: Mapped[Optional[str]] = mapped_column(String(32))
     category: Mapped[str] = mapped_column(String(32), nullable=False)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     message: Mapped[str] = mapped_column(Text, nullable=False)
@@ -153,5 +157,6 @@ Index("ix_incidents_status", Incident.status)
 Index("ix_incidents_severity", Incident.severity)
 Index("ix_notifications_incident", Notification.incident_id)
 Index("ix_notifications_status", Notification.status)
+Index("ix_notifications_correlation_id", Notification.correlation_id)
 Index("ix_maintenance_windows_active", MaintenanceWindow.active)
 Index("ix_maintenance_windows_ends_at", MaintenanceWindow.ends_at)
