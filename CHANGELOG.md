@@ -2,6 +2,8 @@
 
 ## 1.0.4 - unreleased
 
+- Abilitato il watchdog Supervisor sull'add-on: riavvio automatico in caso di
+  crash del container, senza intervento manuale.
 - Copertura test per riavvio/disconnessione/riconnessione WebSocket (nessun
   codice applicativo cambiato, solo test): un nuovo test end-to-end fa
   passare uno stato attraverso due cicli di connessione reali (client
