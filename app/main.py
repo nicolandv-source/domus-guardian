@@ -69,6 +69,12 @@ def notification_policy() -> NotificationPolicy:
                 min(int(os.getenv("NOTIFICATION_OUTBOX_STALE_SECONDS", "120")), 3600),
             )
         ),
+        auto_dismiss_after=timedelta(
+            minutes=max(
+                1,
+                min(int(os.getenv("NOTIFICATION_AUTO_DISMISS_MINUTES", "30")), 1440),
+            )
+        ),
     )
 
 
@@ -136,6 +142,22 @@ async def run_notification_retry_worker(
             raise
         except Exception:
             logger.exception("notification_retry_worker_failed")
+
+
+async def run_notification_cleanup_worker(
+    engine: NotificationEngine, *, interval_seconds: float = 300.0
+) -> None:
+    """Periodically dismiss resolved incidents' cards from the HA panel."""
+    while True:
+        await asyncio.sleep(interval_seconds)
+        try:
+            dismissed = await engine.dismiss_resolved_notifications()
+            if dismissed:
+                logger.info("Notifiche risolte rimosse dal pannello HA: %s", dismissed)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("notification_cleanup_worker_failed")
 
 
 async def run_reconciliation_worker(
@@ -223,6 +245,10 @@ async def lifespan(app: FastAPI):
         run_notification_retry_worker(notification_engine),
         name="notification-retry-worker",
     )
+    notification_cleanup_task = asyncio.create_task(
+        run_notification_cleanup_worker(notification_engine),
+        name="notification-cleanup-worker",
+    )
     reconciliation_task = asyncio.create_task(
         run_reconciliation_worker(service),
         name="incident-reconciliation-worker",
@@ -262,6 +288,7 @@ async def lifespan(app: FastAPI):
     app.state.websocket_task = websocket_task
     app.state.debounce_task = debounce_task
     app.state.notification_retry_task = notification_retry_task
+    app.state.notification_cleanup_task = notification_cleanup_task
     app.state.reconciliation_task = reconciliation_task
     app.state.staleness_task = staleness_task
     app.state.watchdog = watchdog
@@ -276,6 +303,7 @@ async def lifespan(app: FastAPI):
             websocket_task,
             debounce_task,
             notification_retry_task,
+            notification_cleanup_task,
             reconciliation_task,
             staleness_task,
             watchdog_task,
@@ -285,6 +313,7 @@ async def lifespan(app: FastAPI):
             websocket_task,
             debounce_task,
             notification_retry_task,
+            notification_cleanup_task,
             reconciliation_task,
             staleness_task,
             watchdog_task,
@@ -480,6 +509,7 @@ def notification_to_dict(notification: Notification) -> dict[str, object]:
         "status": notification.status,
         "attempts": notification.attempts,
         "sent_at": notification.sent_at,
+        "dismissed_at": notification.dismissed_at,
         "error_message": notification.error_message,
         "created_at": notification.created_at,
     }

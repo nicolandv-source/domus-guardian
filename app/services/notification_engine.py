@@ -32,6 +32,9 @@ class NotificationPolicy:
     # enough to clear the batch window plus normal delivery latency without
     # racing an in-flight send.
     outbox_stale_after: timedelta = timedelta(minutes=2)
+    # How long a resolved incident's HA persistent-notification card stays
+    # visible (showing "RISOLTO") before being auto-dismissed from the panel.
+    auto_dismiss_after: timedelta = timedelta(minutes=30)
 
     def should_notify(self, severity: str) -> bool:
         return severity == "critical" or (
@@ -234,6 +237,10 @@ class NotificationEngine:
                 for notification in notifications:
                     row = self._repository.get(session, notification.id)
                     if row is not None:
+                        # The batch id is what actually reached Home Assistant;
+                        # each row otherwise keeps its own per-incident id,
+                        # which cleanup could never use to dismiss the card.
+                        self._repository.mark_delivered_as(session, row, batch_id)
                         self._repository.mark_sent(session, row, now)
         logger.info(
             "Notifica batch Home Assistant inviata: %s dispositivi (%s)",
@@ -273,6 +280,47 @@ class NotificationEngine:
         for notification_id in retry_ids:
             await self._deliver(notification_id)
         return len(retry_ids)
+
+    async def dismiss_resolved_notifications(self) -> int:
+        """Clear resolved incidents' cards from the HA panel; keep their history.
+
+        Rows are never deleted here (or anywhere): ``/api/v1/notifications``
+        stays a full audit trail. This only calls
+        ``persistent_notification.dismiss`` so a resolved incident stops
+        being an "active" card once its grace period has passed, and marks
+        the row dismissed so the sweep does not repeat the call.
+        """
+        now = datetime.now(timezone.utc)
+        with self._session_factory() as session:
+            candidates = self._repository.resolved_pending_dismissal(
+                session, now - self._policy.auto_dismiss_after
+            )
+            by_notification_id: dict[str, list[int]] = {}
+            for notification in candidates:
+                by_notification_id.setdefault(notification.notification_id, []).append(
+                    notification.id
+                )
+
+        dismissed = 0
+        for notification_id, row_ids in by_notification_id.items():
+            try:
+                await self._adapter.dismiss_persistent_notification(notification_id)
+            except Exception as exc:
+                logger.warning(
+                    "Rimozione notifica Home Assistant fallita: %s (%s)",
+                    notification_id,
+                    type(exc).__name__,
+                )
+                continue
+            now = datetime.now(timezone.utc)
+            with self._session_factory() as session:
+                with session.begin():
+                    for row_id in row_ids:
+                        row = self._repository.get(session, row_id)
+                        if row is not None:
+                            self._repository.mark_dismissed(session, row, now)
+            dismissed += len(row_ids)
+        return dismissed
 
     async def _deliver(self, notification_id: int) -> None:
         with self._session_factory() as session:

@@ -74,6 +74,26 @@ class NotificationRepository:
         notification.error_message = "notification cooldown"
         session.flush()
 
+    def mark_delivered_as(
+        self, session: Session, notification: Notification, notification_id: str
+    ) -> None:
+        """Record the HA-side id actually used for delivery.
+
+        A batched delivery upserts one shared persistent notification for
+        several incidents; each underlying row otherwise keeps the
+        per-incident id it was created with (``domus_incident_{id}``), which
+        is never what reached Home Assistant. Cleanup needs the real id to
+        dismiss the right card.
+        """
+        notification.notification_id = notification_id
+        session.flush()
+
+    def mark_dismissed(
+        self, session: Session, notification: Notification, now: datetime
+    ) -> None:
+        notification.dismissed_at = now
+        session.flush()
+
     def has_recent_open_delivery(
         self,
         session: Session,
@@ -126,6 +146,27 @@ class NotificationRepository:
                     Notification.channel == "ha_persistent",
                     Notification.status == "pending",
                     Notification.created_at < older_than,
+                )
+            )
+        )
+
+    def resolved_pending_dismissal(
+        self, session: Session, older_than: datetime
+    ) -> list[Notification]:
+        """Delivered 'resolved' cards not yet cleared from the HA panel.
+
+        Only ``resolved`` deliveries are dismissed: an open incident's card
+        must stay visible until it is actually resolved. History stays in
+        this table either way; dismissal only clears the live HA panel.
+        """
+        return list(
+            session.scalars(
+                select(Notification).where(
+                    Notification.channel == "ha_persistent",
+                    Notification.event_type == "resolved",
+                    Notification.status == "sent",
+                    Notification.dismissed_at.is_(None),
+                    Notification.sent_at < older_than,
                 )
             )
         )

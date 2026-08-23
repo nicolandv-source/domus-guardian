@@ -16,6 +16,17 @@
   test per il rifiuto di autenticazione (token scaduto/non valido): deve
   propagarsi come un normale fallimento di connessione, rientrando nel retry
   con backoff, non bloccare il processo né retryare in modo silenzioso.
+- Pulizia automatica delle notifiche risolte: una card di incidente
+  risolto in Home Assistant (quella che mostra "RISOLTO") viene ora rimossa
+  dal pannello notifiche di HA (`persistent_notification.dismiss`) dopo
+  `NOTIFICATION_AUTO_DISMISS_MINUTES` (default 30 min) — solo dal pannello
+  live, mai dalla cronologia: `/api/v1/notifications` resta un registro
+  completo, incidenti aperti non vengono mai toccati. Corretto anche un
+  effetto collaterale: una consegna raggruppata (batch) ora salva sulla riga
+  il vero id Home Assistant usato per l'invio, non più quello per-incidente
+  mai realmente creato — necessario perché la pulizia sappia quale card
+  rimuovere. Nuovo worker periodico `notification-cleanup-worker`.
+  Migrazione `0006_notification_dismissed_at`.
 - Outbox notifiche completato: ogni notifica (log e Home Assistant) porta ora
   un `correlation_id` condiviso tra il record di log, la consegna e ogni
   ritentativo — anche tra le notifiche raggruppate in uno stesso batch.
