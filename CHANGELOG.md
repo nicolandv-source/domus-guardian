@@ -2,6 +2,16 @@
 
 ## 1.0.4 - unreleased
 
+- Refresh periodico registry/stati Home Assistant: finora lo snapshot
+  completo (entity registry, device registry, `get_states`) veniva rifatto
+  solo all'avvio e ad ogni riconnessione WebSocket imprevista — su una
+  connessione stabile per giorni, una modifica al registry HA (rinomina,
+  spostamento dispositivo, nuova entità) non veniva mai recepita finché non
+  cadeva la connessione. Nuovo worker periodico (`HA_REGISTRY_REFRESH_MINUTES`,
+  default 360 min) che forza una riconnessione pianificata riusando
+  `request_reconnect()` già usato dal watchdog per il WebSocket "stale" —
+  stesso percorso di codice già testato, nessuna nuova logica di rete: lo
+  snapshot completo che segue è ciò che corregge il drift.
 - Pulizia automatica delle notifiche risolte: una card di incidente
   risolto in Home Assistant (quella che mostra "RISOLTO") viene ora rimossa
   dal pannello notifiche di HA (`persistent_notification.dismiss`) dopo
