@@ -88,6 +88,11 @@ def staleness_check_interval_seconds() -> float:
     return max(30, min(seconds, 3600))
 
 
+def ha_registry_refresh_interval_seconds() -> float:
+    minutes = int(os.getenv("HA_REGISTRY_REFRESH_MINUTES", "360"))
+    return max(30, min(minutes, 10080)) * 60
+
+
 def watchdog_options() -> tuple[int, timedelta, int, int, float]:
     """Read watchdog options without requiring a settings.py migration."""
     interval_seconds = max(
@@ -174,6 +179,33 @@ async def run_reconciliation_worker(
         await asyncio.sleep(interval_seconds)
 
 
+async def run_registry_refresh_worker(
+    websocket_client: HomeAssistantWebSocketClient,
+    *,
+    interval_seconds: float = 21600.0,
+) -> None:
+    """Force a periodic full resync against Home Assistant's registries.
+
+    The WebSocket client already replays the entire entity/device registry
+    and every current state on every (re)connect — that is where reconciliation
+    actually happens. A long-lived, healthy connection has no other trigger
+    for it, so entity/device registry changes made in HA (renames, moved
+    devices, new entities) would otherwise only be picked up on the next
+    unplanned reconnect. This reuses the same safe reconnect the watchdog
+    already relies on for a stale WebSocket, just on a fixed schedule instead
+    of a health signal; the following ``get_states`` replay is what corrects
+    any drift, with no duplicates (open/upsert are idempotent).
+    """
+    while True:
+        await asyncio.sleep(interval_seconds)
+        try:
+            await websocket_client.request_reconnect()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("ha_registry_refresh_worker_failed")
+
+
 async def run_staleness_worker(
     service: DeviceService,
     weights: HealthWeights,
@@ -241,6 +273,12 @@ async def lifespan(app: FastAPI):
         run_debounce_worker(service),
         name="device-debounce-worker",
     )
+    registry_refresh_task = asyncio.create_task(
+        run_registry_refresh_worker(
+            websocket_client, interval_seconds=ha_registry_refresh_interval_seconds()
+        ),
+        name="ha-registry-refresh-worker",
+    )
     notification_retry_task = asyncio.create_task(
         run_notification_retry_worker(notification_engine),
         name="notification-retry-worker",
@@ -287,6 +325,7 @@ async def lifespan(app: FastAPI):
     app.state.notification_engine = notification_engine
     app.state.websocket_task = websocket_task
     app.state.debounce_task = debounce_task
+    app.state.registry_refresh_task = registry_refresh_task
     app.state.notification_retry_task = notification_retry_task
     app.state.notification_cleanup_task = notification_cleanup_task
     app.state.reconciliation_task = reconciliation_task
@@ -302,6 +341,7 @@ async def lifespan(app: FastAPI):
         for task in (
             websocket_task,
             debounce_task,
+            registry_refresh_task,
             notification_retry_task,
             notification_cleanup_task,
             reconciliation_task,
@@ -312,6 +352,7 @@ async def lifespan(app: FastAPI):
         for task in (
             websocket_task,
             debounce_task,
+            registry_refresh_task,
             notification_retry_task,
             notification_cleanup_task,
             reconciliation_task,

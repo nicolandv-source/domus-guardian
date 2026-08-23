@@ -9,6 +9,7 @@ from app.main import (
     run_debounce_worker,
     run_notification_cleanup_worker,
     run_notification_retry_worker,
+    run_registry_refresh_worker,
     run_staleness_worker,
 )
 
@@ -93,6 +94,34 @@ async def test_notification_cleanup_worker_survives_transient_error() -> None:
         await task
 
     assert engine.calls >= 2
+
+
+class FlakyWebSocketClientForRegistryRefresh:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.recovered = asyncio.Event()
+
+    async def request_reconnect(self) -> bool:
+        self.calls += 1
+        if self.calls == 1:
+            raise RuntimeError("transient websocket error")
+        self.recovered.set()
+        return True
+
+
+@pytest.mark.asyncio
+async def test_registry_refresh_worker_survives_transient_error() -> None:
+    client = FlakyWebSocketClientForRegistryRefresh()
+    task = asyncio.create_task(
+        run_registry_refresh_worker(client, interval_seconds=0)
+    )
+
+    await asyncio.wait_for(client.recovered.wait(), timeout=1)
+    task.cancel()
+    with suppress(asyncio.CancelledError):
+        await task
+
+    assert client.calls >= 2
 
 
 class FlakyDeviceServiceForStaleness:
