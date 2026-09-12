@@ -53,20 +53,36 @@ class CoreDaidSyncService:
 
     async def reconcile_with_core(self) -> int:
         """Call Core for each link still owed a DAID. One device's failure
-        (Core down, timeout, 5xx) never stops the rest of the batch."""
-        confirmed = 0
+        (Core down, timeout, 5xx) never stops the rest of the batch.
+
+        A fresh session per device: the DB connection is held only for the
+        ``mark_confirmed``/``mark_attempt_failed`` write, never across the
+        HTTP wait for Core.
+        """
         with self._session_factory() as session:
-            for link in self._links.due_for_reconcile(session, self._max_attempts):
-                try:
-                    daid = await self._core.create_identity()
-                except Exception:
-                    logger.exception(
-                        "core_daid_reconcile_failed device_id_ha=%s",
-                        link.device_id_ha,
+            device_ids = [
+                link.device_id_ha
+                for link in self._links.due_for_reconcile(session, self._max_attempts)
+            ]
+
+        confirmed = 0
+        for device_id_ha in device_ids:
+            try:
+                daid = await self._core.create_identity()
+            except Exception:
+                logger.exception(
+                    "core_daid_reconcile_failed device_id_ha=%s", device_id_ha
+                )
+                with self._session_factory() as session:
+                    self._links.mark_attempt_failed(
+                        session, self._links.get(session, device_id_ha)
                     )
-                    self._links.mark_attempt_failed(session, link)
-                    continue
-                self._links.mark_confirmed(session, link, daid)
-                confirmed += 1
-            session.commit()
+                    session.commit()
+                continue
+            with self._session_factory() as session:
+                self._links.mark_confirmed(
+                    session, self._links.get(session, device_id_ha), daid
+                )
+                session.commit()
+            confirmed += 1
         return confirmed

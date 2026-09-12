@@ -174,3 +174,44 @@ async def test_reconcile_one_failure_does_not_block_the_rest_of_the_batch() -> N
             for row in session.query(CoreDaidLink).all()
         }
         assert sorted(statuses.values()) == ["confirmed", "failed"]
+
+
+class CountingSessionFactory:
+    """Wraps a real sessionmaker to count how many sessions it opens."""
+
+    def __init__(self, factory: sessionmaker) -> None:
+        self._factory = factory
+        self.calls = 0
+
+    def __call__(self):
+        self.calls += 1
+        return self._factory()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_opens_a_separate_session_per_device_not_one_for_the_batch() -> None:
+    grouping = DeviceGrouping()
+    seen_device(grouping, "light.cucina", "device-1")
+    seen_device(grouping, "sensor.temp_salotto", "device-2")
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    counting_factory = CountingSessionFactory(
+        sessionmaker(bind=engine, expire_on_commit=False)
+    )
+    adapter = FakeCoreIdentityAdapter()
+    service = CoreDaidSyncService(
+        session_factory=counting_factory,
+        repository=CoreDaidLinkRepository(),
+        grouping=grouping,
+        core_identity_adapter=adapter,
+    )
+    service.sync_pending()
+    counting_factory.calls = 0  # only count sessions opened by reconcile
+
+    confirmed = await service.reconcile_with_core()
+
+    assert confirmed == 2
+    # One session to read the due list, plus one more per device for its
+    # own write (mark_confirmed) — never a single session held for the
+    # whole batch, which would leave calls == 1.
+    assert counting_factory.calls == 1 + 2
