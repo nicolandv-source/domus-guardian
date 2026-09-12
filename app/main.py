@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 
+from app.adapters.core_identity import CoreIdentityAdapter
 from app.adapters.home_assistant import HomeAssistantAdapter
 from app.adapters.home_assistant_notify import HomeAssistantNotifyAdapter
 from app.adapters.home_assistant_state import HomeAssistantStateAdapter
@@ -22,9 +23,11 @@ from app.core.event_bus import EventBus
 from app.database import SessionLocal, ping_database, reset_database_pool
 from app.ha.websocket import HomeAssistantWebSocketClient
 from app.models import Device, Incident, MaintenanceWindow, Notification
+from app.repositories.core_daid_links import CoreDaidLinkRepository
 from app.repositories.devices import DeviceRepository
 from app.repositories.incidents import IncidentRepository
 from app.repositories.notifications import NotificationRepository
+from app.services.core_daid_sync import CoreDaidSyncService
 from app.services.device_debounce import DeviceDebouncer
 from app.services.device_grouping import DeviceGrouping
 from app.services.device_service import DeviceService
@@ -97,6 +100,16 @@ def ha_registry_refresh_interval_seconds() -> float:
 
 def sensor_publish_interval_seconds() -> float:
     seconds = int(os.getenv("HA_SENSOR_PUBLISH_INTERVAL_SECONDS", "30"))
+    return max(10, min(seconds, 3600))
+
+
+def core_daid_sync_interval_seconds() -> float:
+    seconds = int(os.getenv("CORE_DAID_SYNC_INTERVAL_SECONDS", "60"))
+    return max(10, min(seconds, 3600))
+
+
+def core_daid_reconcile_interval_seconds() -> float:
+    seconds = int(os.getenv("CORE_DAID_RECONCILE_INTERVAL_SECONDS", "30"))
     return max(10, min(seconds, 3600))
 
 
@@ -301,6 +314,41 @@ async def run_staleness_worker(
         await asyncio.sleep(interval_seconds)
 
 
+async def run_core_daid_sync_worker(
+    service: CoreDaidSyncService, *, interval_seconds: float = 60.0
+) -> None:
+    """Create a pending core_daid_links row for every device Guardian has
+    seen but not yet linked to a Core DAID."""
+    while True:
+        try:
+            created = service.sync_pending()
+            if created:
+                logger.info("Nuovi core_daid_links in pending: %s", created)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("core_daid_sync_worker_failed")
+        await asyncio.sleep(interval_seconds)
+
+
+async def run_core_daid_reconcile_worker(
+    service: CoreDaidSyncService, *, interval_seconds: float = 30.0
+) -> None:
+    """Ask DOMUS Core for a DAID for each link still pending or
+    retriable-failed. Core being unreachable never raises past this loop —
+    see ADR-0011 in domus-platform."""
+    while True:
+        try:
+            confirmed = await service.reconcile_with_core()
+            if confirmed:
+                logger.info("DAID confermati da Core: %s", confirmed)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("core_daid_reconcile_worker_failed")
+        await asyncio.sleep(interval_seconds)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     event_bus = EventBus()
@@ -375,6 +423,29 @@ async def lifespan(app: FastAPI):
         ),
         name="device-staleness-worker",
     )
+    core_daid_sync_service = CoreDaidSyncService(
+        session_factory=SessionLocal,
+        repository=CoreDaidLinkRepository(),
+        grouping=grouping,
+        core_identity_adapter=CoreIdentityAdapter(
+            base_url=settings.core_base_url,
+            timeout_seconds=settings.core_request_timeout_seconds,
+        ),
+    )
+    core_daid_sync_task = asyncio.create_task(
+        run_core_daid_sync_worker(
+            core_daid_sync_service,
+            interval_seconds=core_daid_sync_interval_seconds(),
+        ),
+        name="core-daid-sync-worker",
+    )
+    core_daid_reconcile_task = asyncio.create_task(
+        run_core_daid_reconcile_worker(
+            core_daid_sync_service,
+            interval_seconds=core_daid_reconcile_interval_seconds(),
+        ),
+        name="core-daid-reconcile-worker",
+    )
     (
         watchdog_interval,
         websocket_stale_after,
@@ -424,6 +495,9 @@ async def lifespan(app: FastAPI):
     app.state.notification_cleanup_task = notification_cleanup_task
     app.state.reconciliation_task = reconciliation_task
     app.state.staleness_task = staleness_task
+    app.state.core_daid_sync_service = core_daid_sync_service
+    app.state.core_daid_sync_task = core_daid_sync_task
+    app.state.core_daid_reconcile_task = core_daid_reconcile_task
     app.state.watchdog = watchdog
     app.state.watchdog_task = watchdog_task
     app.state.sensor_publish_task = sensor_publish_task
@@ -441,6 +515,8 @@ async def lifespan(app: FastAPI):
             notification_cleanup_task,
             reconciliation_task,
             staleness_task,
+            core_daid_sync_task,
+            core_daid_reconcile_task,
             watchdog_task,
             sensor_publish_task,
         ):
@@ -453,6 +529,8 @@ async def lifespan(app: FastAPI):
             notification_cleanup_task,
             reconciliation_task,
             staleness_task,
+            core_daid_sync_task,
+            core_daid_reconcile_task,
             watchdog_task,
             sensor_publish_task,
         ):
