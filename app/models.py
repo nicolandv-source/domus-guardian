@@ -151,6 +151,33 @@ class Notification(Base):
     incident: Mapped[Incident] = relationship(back_populates="notifications")
 
 
+class CoreDaidLink(Base):
+    """Links a Guardian-tracked physical device to a DOMUS Core DAID.
+
+    Named ``core_daid_links``, not ``device_identities``: the latter would
+    collide in name (though not in code — different module, different
+    lifetime) with ``DeviceGrouping._device_identities``, the unrelated
+    in-memory dict of MAC/name/model evidence used for entity clustering.
+    """
+
+    __tablename__ = "core_daid_links"
+
+    device_id_ha: Mapped[str] = mapped_column(String(255), primary_key=True)
+    daid: Mapped[Optional[str]] = mapped_column(String(64))
+    daid_status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="pending", server_default="pending"
+    )
+    attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
 Index("ix_devices_domain", Device.domain)
 Index("ix_devices_available", Device.is_available)
 Index("ix_incidents_entity_id", Incident.entity_id)
@@ -161,3 +188,4 @@ Index("ix_notifications_status", Notification.status)
 Index("ix_notifications_correlation_id", Notification.correlation_id)
 Index("ix_maintenance_windows_active", MaintenanceWindow.active)
 Index("ix_maintenance_windows_ends_at", MaintenanceWindow.ends_at)
+Index("ix_core_daid_links_status", CoreDaidLink.daid_status)

@@ -18,6 +18,12 @@ class Settings(BaseSettings):
     ha_request_timeout_seconds: float = 10
     ha_verify_ssl: bool = False
 
+    # Hostname, not the Docker bridge IP: the IP is not guaranteed stable
+    # across restarts (see docs/DER-2026-09-05-guardian-core-identities.md
+    # in domus-platform, "prossimi passi" #5).
+    core_base_url: str = "http://local-domus-core:8000"
+    core_request_timeout_seconds: float = 5
+
     model_config = SettingsConfigDict(
         case_sensitive=False,
         extra="ignore",
