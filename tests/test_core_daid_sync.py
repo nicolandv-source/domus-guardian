@@ -21,10 +21,12 @@ class FakeCoreIdentityAdapter:
     def __init__(self) -> None:
         self.calls = 0
         self.fail_next = 0
+        self.external_refs: list[str] = []
         self._next_daid = 0
 
-    async def create_identity(self) -> str:
+    async def create_identity(self, external_ref: str) -> str:
         self.calls += 1
+        self.external_refs.append(external_ref)
         if self.fail_next > 0:
             self.fail_next -= 1
             raise RuntimeError("Core unreachable")
@@ -106,6 +108,7 @@ async def test_reconcile_confirms_pending_link_on_success() -> None:
 
     assert confirmed == 1
     assert adapter.calls == 1
+    assert adapter.external_refs == ["guardian:device:device-1"]
     with factory() as session:
         link = session.get(CoreDaidLink, "device-1")
         assert link.daid_status == "confirmed"

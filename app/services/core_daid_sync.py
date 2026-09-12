@@ -15,6 +15,10 @@ logger = logging.getLogger(__name__)
 MAX_DAID_SYNC_ATTEMPTS = 3
 
 
+def _external_ref(device_id_ha: str) -> str:
+    return f"guardian:device:{device_id_ha}"
+
+
 class CoreDaidSyncService:
     """Owns the two-step, fail-open path from a physical HA device to a
     DOMUS Core DAID: ``sync_pending`` discovers devices, ``reconcile_with_core``
@@ -68,7 +72,7 @@ class CoreDaidSyncService:
         confirmed = 0
         for device_id_ha in device_ids:
             try:
-                daid = await self._core.create_identity()
+                daid = await self._core.create_identity(_external_ref(device_id_ha))
             except Exception:
                 logger.exception(
                     "core_daid_reconcile_failed device_id_ha=%s", device_id_ha
